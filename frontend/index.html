@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>本地 AI 助手</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
+    
+    <!-- 引入外部CSS -->
+    <link rel="stylesheet" href="style.css">
+    
+    <!-- 引入Marked.js库用于Markdown解析 -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    
+    <!-- 引入DOMPurify用于XSS防护 -->
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.5/dist/purify.min.js"></script>
+</head>
+<body>
+
+<div class="app-container">
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <div class="app-title">🤖 AI 助手</div>
+            <div class="sidebar-buttons">
+                <button id="new-conversation-btn">新对话</button>
+            </div>
+        </div>
+        <div class="conversation-list" id="conversation-list"></div>
+        <div class="sidebar-footer">
+            <button class="settings-btn" id="settings-btn">⚙️ 设置</button>
+        </div>
+    </div>
+
+    <div class="main-panel">
+        <div class="chat-header">
+            <div class="chat-title" id="chat-title">请选择一个对话</div>
+            <div class="chat-controls">
+                <label>
+                    模型
+                    <select id="model-select"></select>
+                </label>
+                <label>
+                    Provider
+                    <select id="provider-select">
+                        <option value="">(全局默认)</option>
+                    </select>
+                </label>
+            </div>
+        </div>
+        <div class="chat-messages" id="chat-messages" data-density="normal"></div>
+        <div class="chat-footer">
+            <div class="chat-toggles">
+                <label><input type="checkbox" id="toggle-knowledge"> 📚 知识库</label>
+                <label><input type="checkbox" id="toggle-mcp"> 🔧 MCP</label>
+                <label>
+                    <input type="checkbox" id="toggle-web"> 🌐 联网搜索
+                    <select id="web-search-source" style="margin-left: 5px; font-size: 12px; display: none;">
+                        <option value="bing">必应搜索</option>
+                        <option value="tavily">Tavily</option>
+                    </select>
+                </label>
+                <label><input type="checkbox" id="toggle-stream" checked> ⚡ 流式输出</label>
+            </div>
+            <div class="chat-input-container">
+                <textarea id="user-input" placeholder="输入内容，按 Enter 发送，Shift+Enter 换行"></textarea>
+                <button id="send-btn">发送</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 设置弹窗 -->
+<div class="modal settings-modal" id="settings-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <span class="modal-title">⚙️ 系统设置</span>
+            <button class="modal-close" data-target="settings-modal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div style="width: 100%;">
+                <!-- 界面设置 -->
+                <div class="settings-section">
+                    <h4>🎨 界面设置</h4>
+                    <div class="settings-row">
+                        <label>字体大小</label>
+                        <select id="font-size-select">
+                            <option value="11px">很小</option>
+                            <option value="12px">小</option>
+                            <option value="13px" selected>较小</option>
+                            <option value="14px">中</option>
+                            <option value="15px">较大</option>
+                            <option value="16px">大</option>
+                            <option value="18px">很大</option>
+                        </select>
+                    </div>
+                    <div class="settings-row">
+                        <label>内容间距</label>
+                        <select id="density-select">
+                            <option value="compact">紧凑</option>
+                            <option value="normal" selected>标准</option>
+                            <option value="airy">宽松</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- AI设置 -->
+                <div class="settings-section">
+                    <h4>🤖 AI设置</h4>
+                    <div class="settings-row">
+                        <label>自动命名模型</label>
+                        <select id="auto-title-model-select">
+                            <option value="current">使用当前对话模型</option>
+                        </select>
+                    </div>
+                    <div class="settings-row">
+                        <label>视觉模型</label>
+                        <select id="vision-model-select">
+                            <option value="">选择视觉模型</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- 联网搜索设置 -->
+                <div class="settings-section">
+                    <h4>🌐 联网搜索设置</h4>
+                    <div class="settings-row">
+                        <label>配置搜索API密钥</label>
+                        <button type="button" id="manage-search-keys-btn">配置联网搜索</button>
+                    </div>
+                </div>
+
+                <!-- 管理功能 -->
+                <div class="settings-section">
+                    <h4>🛠️ 系统管理</h4>
+                    <div class="settings-row">
+                        <label>数据库初始化</label>
+                        <button type="button" id="init-database-btn">初始化数据库</button>
+                    </div>
+                    <div class="settings-row">
+                        <label>模型提供商管理</label>
+                        <button type="button" id="manage-providers-btn">管理 Provider</button>
+                    </div>
+                    <div class="settings-row">
+                        <label>知识库管理</label>
+                        <button type="button" id="manage-knowledge-btn">管理知识库</button>
+                    </div>
+                    <div class="settings-row">
+                        <label>MCP服务器管理</label>
+                        <button type="button" id="manage-mcp-btn">管理 MCP</button>
+                    </div>
+                    <div class="settings-row">
+                        <label>重新渲染消息</label>
+                        <button type="button" id="rerender-messages-btn">重新渲染所有消息</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Provider 管理弹窗 -->
+<div class="modal" id="provider-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <span class="modal-title">模型提供商管理</span>
+            <button class="modal-close" data-target="provider-modal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="provider-list-container">
+                <h3>已配置的 Provider</h3>
+                <div id="provider-list"></div>
+            </div>
+            <div class="provider-form-container">
+                <h3>新建 / 编辑</h3>
+                <form id="provider-form">
+                    <input type="hidden" id="provider-id">
+                    <div class="form-row">
+                        <label>名称</label>
+                        <input type="text" id="provider-name" required placeholder="如: OpenAI / DMX">
+                    </div>
+                    <div class="form-row">
+                        <label>API Base URL</label>
+                        <input type="text" id="provider-api-base" required placeholder="https://api.openai.com/v1">
+                    </div>
+                    <div class="form-row">
+                        <label>API Key</label>
+                        <input type="password" id="provider-api-key" placeholder="不修改请留空">
+                    </div>
+                    <div class="form-row">
+                        <label>默认模型</label>
+                        <input type="text" id="provider-default-model" required placeholder="gpt-4o-mini">
+                    </div>
+                    <div class="form-row">
+                        <label>模型列表</label>
+                        <div id="provider-models-container">
+                            <div class="models-input-group">
+                                <input type="text" class="model-input" placeholder="输入模型名称，如 gpt-4o">
+                                <input type="text" class="model-name-input" placeholder="自定义名称（可选）">
+                                <div class="model-capabilities">
+                                    <label><input type="checkbox" class="cap-vision"> 视觉</label>
+                                    <label><input type="checkbox" class="cap-reasoning"> 推理</label>
+                                    <label><input type="checkbox" class="cap-chat"> 对话</label>
+                                </div>
+                                <button type="button" class="add-model-btn">+</button>
+                            </div>
+                        </div>
+                        <small style="color: #666; font-size: 12px;">点击 + 添加更多模型，可为每个模型标记功能</small>
+                    </div>
+                    <div class="form-row">
+                        <label style="flex-direction: row; display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="provider-is-default" style="width: auto;"> 设为默认 Provider
+                        </label>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit">保存</button>
+                        <button type="button" id="provider-form-reset">重置</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 知识库管理弹窗 -->
+<div class="modal" id="knowledge-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <span class="modal-title">知识库管理</span>
+            <button class="modal-close" data-target="knowledge-modal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="kb-list-container">
+                <h3>我的知识库</h3>
+                <div id="kb-list"></div>
+                
+                <h3 style="margin-top: 20px; border-top: 1px solid #ddd; padding-top: 12px;">新建知识库</h3>
+                <form id="kb-form">
+                    <div class="form-row">
+                        <label>名称</label>
+                        <input type="text" id="kb-name" placeholder="如: 公司文档">
+                    </div>
+                    <div class="form-row">
+                        <label>描述</label>
+                        <input type="text" id="kb-description" placeholder="可选描述">
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit">创建</button>
+                    </div>
+                </form>
+            </div>
+            <div class="kb-upload-container">
+                <h3>上传文档</h3>
+                <form id="kb-upload-form">
+                    <div class="form-row">
+                        <label>目标知识库</label>
+                        <select id="kb-select"></select>
+                    </div>
+                    <div class="form-row">
+                        <label>向量模型</label>
+                        <select id="embedding-model-select"></select>
+                    </div>
+                    <div class="form-row">
+                        <label>重排模型（可选）</label>
+                        <select id="rerank-model-select">
+                            <option value="">不使用重排模型</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <label>视觉模型（可选）</label>
+                        <select id="kb-vision-model-select">
+                            <option value="">不使用视觉模型</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <label>选择文件 (txt/md/csv)</label>
+                        <input type="file" id="kb-file" required>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit">上传并构建向量</button>
+                    </div>
+                </form>
+                <div id="kb-upload-status" class="status-text"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MCP服务器管理弹窗 -->
+<div class="modal" id="mcp-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <span class="modal-title">MCP服务器管理</span>
+            <button class="modal-close" data-target="mcp-modal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="mcp-list-container">
+                <h3>已配置的MCP服务器</h3>
+                <div id="mcp-list"></div>
+            </div>
+            <div class="mcp-form-container">
+                <h3>新建 / 编辑MCP服务器</h3>
+                <form id="mcp-form">
+                    <input type="hidden" id="mcp-id">
+                    <div class="form-row">
+                        <label>服务器名称</label>
+                        <input type="text" id="mcp-name" required placeholder="如: github-mcp">
+                    </div>
+                    <div class="form-row">
+                        <label>描述</label>
+                        <input type="text" id="mcp-description" placeholder="可选描述">
+                    </div>
+                    <div class="form-row">
+                        <label>连接类型</label>
+                        <select id="mcp-connection-type" required>
+                            <option value="">请选择连接类型</option>
+                            <option value="stdio">STDIO (本地命令)</option>
+                            <option value="http">HTTP (远程服务)</option>
+                        </select>
+                    </div>
+                    
+                    <!-- STDIO配置 -->
+                    <div id="mcp-stdio-config" style="display: none;">
+                        <div class="form-row">
+                            <label>命令</label>
+                            <input type="text" id="mcp-command" placeholder="如: npx">
+                        </div>
+                        <div class="form-row">
+                            <label>参数列表</label>
+                            <div id="mcp-args-container">
+                                <div class="args-input-group">
+                                    <input type="text" class="arg-input" placeholder="输入参数，如 -y">
+                                    <button type="button" class="add-arg-btn">+</button>
+                                </div>
+                            </div>
+                            <small style="color: #666; font-size: 12px;">点击 + 添加更多参数</small>
+                        </div>
+                    </div>
+                    
+                    <!-- HTTP配置 -->
+                    <div id="mcp-http-config" style="display: none;">
+                        <div class="form-row">
+                            <label>服务URL</label>
+                            <input type="url" id="mcp-url" placeholder="https://example.com/mcp">
+                        </div>
+                    </div>
+                    
+                    <!-- 环境变量配置 -->
+                    <div class="form-row">
+                        <label>环境变量 (可选)</label>
+                        <div id="mcp-env-container">
+                            <div class="env-input-group">
+                                <input type="text" class="env-key-input" placeholder="变量名">
+                                <input type="text" class="env-value-input" placeholder="变量值">
+                                <button type="button" class="add-env-btn">+</button>
+                            </div>
+                        </div>
+                        <small style="color: #666; font-size: 12px;">点击 + 添加更多环境变量</small>
+                    </div>
+                    
+                    <div class="form-row">
+                        <label style="flex-direction: row; display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="mcp-is-enabled" checked style="width: auto;"> 启用此服务器
+                        </label>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit">保存</button>
+                        <button type="button" id="mcp-form-reset">重置</button>
+                        <button type="button" id="mcp-test-connection">测试连接</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 联网搜索配置弹窗 -->
+<div class="modal" id="search-config-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <span class="modal-title">🌐 联网搜索配置</span>
+            <button class="modal-close" data-target="search-config-modal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div style="width: 100%;">
+                <form id="search-config-form">
+                    <div class="settings-section">
+                        <h4>🔍 搜索源配置</h4>
+                        
+                        <div class="form-row">
+                            <label>默认搜索源</label>
+                            <select id="search-default-source">
+                                <option value="bing">必应搜索</option>
+                                <option value="tavily">Tavily</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-row">
+                            <label>Bing Search API Key</label>
+                            <input type="password" id="bing-api-key" placeholder="输入Bing Search API Key（可选）">
+                            <small style="color: #666; font-size: 12px; margin-top: 5px; display: block;">
+                                获取地址: <a href="https://www.microsoft.com/en-us/bing/apis/bing-web-search-api" target="_blank">Microsoft Bing Search API</a>
+                            </small>
+                        </div>
+                        
+                        <div class="form-row">
+                            <label>Tavily API Key</label>
+                            <input type="password" id="search-tavily-api-key" placeholder="输入Tavily API Key（可选）">
+                            <small style="color: #666; font-size: 12px; margin-top: 5px; display: block;">
+                                获取地址: <a href="https://tavily.com/" target="_blank">Tavily.com</a>
+                            </small>
+                        </div>
+                    </div>
+                    
+                    <div class="form-actions">
+                        <button type="submit">保存配置</button>
+                        <button type="button" id="search-config-test">测试连接</button>
+                        <button type="button" id="search-config-reset">重置</button>
+                    </div>
+                </form>
+                
+                <div id="search-config-status" class="status-text" style="display: none;"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 引入外部JavaScript -->
+<script src="script.js"></script>
+
+</body>
+</html>

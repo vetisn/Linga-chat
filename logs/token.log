@@ -1,0 +1,120 @@
+2025-12-22 09:59:46 - token - INFO - Token使用 (实际) - 模型: mimo-v2-flash-free
+2025-12-22 09:59:46 - token - INFO - 输入Token: 27
+2025-12-22 09:59:46 - token - INFO - 输出Token: 32
+2025-12-22 09:59:46 - token - INFO - 总Token: 59
+2025-12-22 09:59:46 - token - INFO - Token比率: 输入/输出 = 27/32
+2025-12-22 09:59:59 - token - INFO - Token使用 (实际) - 模型: mimo-v2-flash-free
+2025-12-22 09:59:59 - token - INFO - 输入Token: 153
+2025-12-22 09:59:59 - token - INFO - 输出Token: 5
+2025-12-22 09:59:59 - token - INFO - 总Token: 158
+2025-12-22 09:59:59 - token - INFO - Token比率: 输入/输出 = 153/5
+2025-12-22 11:06:27 - token - INFO - Token使用 (实际) - 模型: mimo-v2-flash-free
+2025-12-22 11:06:27 - token - INFO - 输入Token: 30
+2025-12-22 11:06:27 - token - INFO - 输出Token: 1056
+2025-12-22 11:06:27 - token - INFO - 总Token: 1086
+2025-12-22 11:06:27 - token - INFO - Token比率: 输入/输出 = 30/1056
+2025-12-22 11:06:30 - token - INFO - Token使用 (实际) - 模型: mimo-v2-flash-free
+2025-12-22 11:06:30 - token - INFO - 输入Token: 247
+2025-12-22 11:06:30 - token - INFO - 输出Token: 5
+2025-12-22 11:06:30 - token - INFO - 总Token: 252
+2025-12-22 11:06:30 - token - INFO - Token比率: 输入/输出 = 247/5
+2025-12-22 12:24:08 - token - INFO - Token使用 (实际) - 模型: mimo-v2-flash-free
+2025-12-22 12:24:08 - token - INFO - 输入Token: 29
+2025-12-22 12:24:08 - token - INFO - 输出Token: 850
+2025-12-22 12:24:08 - token - INFO - 总Token: 879
+2025-12-22 12:24:08 - token - INFO - Token比率: 输入/输出 = 29/850
+2025-12-22 12:24:10 - token - INFO - Token使用 (实际) - 模型: mimo-v2-flash-free
+2025-12-22 12:24:10 - token - INFO - 输入Token: 229
+2025-12-22 12:24:10 - token - INFO - 输出Token: 5
+2025-12-22 12:24:10 - token - INFO - 总Token: 234
+2025-12-22 12:24:10 - token - INFO - Token比率: 输入/输出 = 229/5
+2025-12-22 12:29:55 - token - INFO - Token使用 (实际) - 模型: mimo-v2-flash-free
+2025-12-22 12:29:55 - token - INFO - 输入Token: 30
+2025-12-22 12:29:55 - token - INFO - 输出Token: 1236
+2025-12-22 12:29:55 - token - INFO - 总Token: 1266
+2025-12-22 12:29:55 - token - INFO - Token比率: 输入/输出 = 30/1236
+2025-12-22 12:38:20 - token - INFO - Token使用 (实际) - 模型: mimo-v2-flash-free
+2025-12-22 12:38:20 - token - INFO - 输入Token: 33
+2025-12-22 12:38:20 - token - INFO - 输出Token: 2079
+2025-12-22 12:38:20 - token - INFO - 总Token: 2112
+2025-12-22 12:38:20 - token - INFO - Token比率: 输入/输出 = 33/2079
+2025-12-22 12:43:30 - token - INFO - Token使用 (实际) - 模型: gemini-3-flash-preview
+2025-12-22 12:43:30 - token - INFO - 输入Token: 90
+2025-12-22 12:43:30 - token - INFO - 输出Token: 386
+2025-12-22 12:43:30 - token - INFO - 总Token: 476
+2025-12-22 12:43:30 - token - INFO - Token比率: 输入/输出 = 90/386
+2025-12-22 12:45:53 - token - INFO - Token使用 (实际) - 模型: gemini-3-flash-preview
+2025-12-22 12:45:53 - token - INFO - 输入Token: 9
+2025-12-22 12:45:53 - token - INFO - 输出Token: 1734
+2025-12-22 12:45:53 - token - INFO - 总Token: 1743
+2025-12-22 12:45:53 - token - INFO - Token比率: 输入/输出 = 9/1734
+2025-12-22 12:55:29 - token - INFO - Token使用 (实际) - 模型: mimo-v2-flash-free
+2025-12-22 12:55:29 - token - INFO - 输入Token: 33
+2025-12-22 12:55:29 - token - INFO - 输出Token: 3646
+2025-12-22 12:55:29 - token - INFO - 总Token: 3679
+2025-12-22 12:55:29 - token - INFO - Token比率: 输入/输出 = 33/3646
+2025-12-22 13:05:55 - token - INFO - Token使用 (实际) - 模型: mimo-v2-flash-free
+2025-12-22 13:05:55 - token - INFO - 输入Token: 29
+2025-12-22 13:05:55 - token - INFO - 输出Token: 746
+2025-12-22 13:05:55 - token - INFO - 总Token: 775
+2025-12-22 13:05:55 - token - INFO - Token比率: 输入/输出 = 29/746
+2025-12-22 13:16:08 - token - INFO - Token使用 (实际) - 模型: gemini-3-flash-preview
+2025-12-22 13:16:08 - token - INFO - 输入Token: 1
+2025-12-22 13:16:08 - token - INFO - 输出Token: 344
+2025-12-22 13:16:08 - token - INFO - 总Token: 345
+2025-12-22 13:16:08 - token - INFO - Token比率: 输入/输出 = 1/344
+2025-12-22 13:16:49 - token - INFO - Token使用 (实际) - 模型: gemini-3-flash-preview
+2025-12-22 13:16:49 - token - INFO - 输入Token: 25
+2025-12-22 13:16:49 - token - INFO - 输出Token: 1530
+2025-12-22 13:16:49 - token - INFO - 总Token: 1555
+2025-12-22 13:16:49 - token - INFO - Token比率: 输入/输出 = 25/1530
+2025-12-22 13:18:49 - token - INFO - Token使用 (实际) - 模型: gemini-3-flash-preview
+2025-12-22 13:18:49 - token - INFO - 输入Token: 1149
+2025-12-22 13:18:49 - token - INFO - 输出Token: 2152
+2025-12-22 13:18:49 - token - INFO - 总Token: 3301
+2025-12-22 13:18:49 - token - INFO - Token比率: 输入/输出 = 1149/2152
+2025-12-22 13:23:11 - token - INFO - Token使用 (实际) - 模型: mimo-v2-flash-free
+2025-12-22 13:23:11 - token - INFO - 输入Token: 29
+2025-12-22 13:23:11 - token - INFO - 输出Token: 1083
+2025-12-22 13:23:11 - token - INFO - 总Token: 1112
+2025-12-22 13:23:11 - token - INFO - Token比率: 输入/输出 = 29/1083
+2025-12-22 13:24:56 - token - INFO - Token使用 (实际) - 模型: mimo-v2-flash-free
+2025-12-22 13:24:56 - token - INFO - 输入Token: 1338
+2025-12-22 13:24:56 - token - INFO - 输出Token: 1297
+2025-12-22 13:24:56 - token - INFO - 总Token: 2635
+2025-12-22 13:24:56 - token - INFO - Token比率: 输入/输出 = 1338/1297
+2025-12-22 13:26:39 - token - INFO - Token使用 (实际) - 模型: gemini-3-flash-preview
+2025-12-22 13:26:39 - token - INFO - 输入Token: 4
+2025-12-22 13:26:39 - token - INFO - 输出Token: 1180
+2025-12-22 13:26:39 - token - INFO - 总Token: 1184
+2025-12-22 13:26:39 - token - INFO - Token比率: 输入/输出 = 4/1180
+2025-12-22 13:27:06 - token - INFO - Token使用 (实际) - 模型: gemini-3-flash-preview
+2025-12-22 13:27:06 - token - INFO - 输入Token: 670
+2025-12-22 13:27:06 - token - INFO - 输出Token: 1034
+2025-12-22 13:27:06 - token - INFO - 总Token: 1704
+2025-12-22 13:27:06 - token - INFO - Token比率: 输入/输出 = 670/1034
+2025-12-22 16:05:02 - token - INFO - Token使用 (实际) - 模型: mimo-v2-flash-free
+2025-12-22 16:05:02 - token - INFO - 输入Token: 28
+2025-12-22 16:05:02 - token - INFO - 输出Token: 704
+2025-12-22 16:05:02 - token - INFO - 总Token: 732
+2025-12-22 16:05:02 - token - INFO - Token比率: 输入/输出 = 28/704
+2025-12-22 16:23:32 - token - INFO - Token使用 (实际) - 模型: mimo-v2-flash-free
+2025-12-22 16:23:32 - token - INFO - 输入Token: 28
+2025-12-22 16:23:32 - token - INFO - 输出Token: 603
+2025-12-22 16:23:32 - token - INFO - 总Token: 631
+2025-12-22 16:23:32 - token - INFO - Token比率: 输入/输出 = 28/603
+2025-12-22 16:37:54 - token - INFO - Token使用 (实际) - 模型: mimo-v2-flash-free
+2025-12-22 16:37:54 - token - INFO - 输入Token: 28
+2025-12-22 16:37:54 - token - INFO - 输出Token: 696
+2025-12-22 16:37:54 - token - INFO - 总Token: 724
+2025-12-22 16:37:54 - token - INFO - Token比率: 输入/输出 = 28/696
+2025-12-22 17:16:07 - token - INFO - Token使用 (实际) - 模型: mimo-v2-flash-free
+2025-12-22 17:16:07 - token - INFO - 输入Token: 27
+2025-12-22 17:16:07 - token - INFO - 输出Token: 35
+2025-12-22 17:16:07 - token - INFO - 总Token: 62
+2025-12-22 17:16:07 - token - INFO - Token比率: 输入/输出 = 27/35
+2025-12-22 17:21:35 - token - INFO - Token使用 (实际) - 模型: mimo-v2-flash-free
+2025-12-22 17:21:35 - token - INFO - 输入Token: 31
+2025-12-22 17:21:35 - token - INFO - 输出Token: 3867
+2025-12-22 17:21:35 - token - INFO - 总Token: 3898
+2025-12-22 17:21:35 - token - INFO - Token比率: 输入/输出 = 31/3867
