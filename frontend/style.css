@@ -25,7 +25,7 @@ body {
     box-shadow: 0 0 10px rgba(0,0,0,0.1);
 }
 
-/* 侧边�?*/
+/* 侧边�?*/
 .sidebar {
     width: calc(280px * var(--sidebar-scale));
     background: #2c3e50;
@@ -67,7 +67,7 @@ body {
     flex: 1;
     overflow-y: auto;
     padding: calc(10px * var(--sidebar-scale));
-    /* 确保滚动条在容器�?*/
+    /* 确保滚动条在容器�?*/
     padding-right: calc(5px * var(--sidebar-scale));
 }
 
@@ -207,7 +207,7 @@ body {
     background: #7f8c8d;
 }
 
-/* 主面�?*/
+/* 主面�?*/
 .main-panel {
     flex: 1;
     display: flex;
@@ -292,7 +292,7 @@ body {
     position: relative;
 }
 
-/* 用户消息的操作按�?*/
+/* 用户消息的操作按�?*/
 .user-message-actions {
     display: flex;
     gap: 4px;
@@ -323,25 +323,46 @@ body {
     border: 1px solid #e0e0e0;
 }
 
-.message-assistant pre {
+/* 代码块容�?*/
+.message-assistant pre,
+.message-assistant pre.code-block {
     position: relative;
-    margin: 0 0 2px 0; /* 进一步减小代码块间距 */
-    max-width: calc(100% - 32px);
+    margin: 0.5em 0;
+    max-width: 100%;
     width: 100%;
+    background: #f8f9fa;
+    border-radius: 4px;
+    border: 1px solid #e1e4e8;
 }
 
-.message-assistant pre code {
+/* 代码块内�?*/
+.message-assistant pre code,
+.message-assistant pre.code-block code {
     display: block;
-    padding: 6px; /* 减小代码块内边距 */
-    padding-top: 28px;
-    background: #2c3e50;
-    color: #ecf0f1;
+    padding: 12px;
+    padding-top: 40px; /* 为头部留出空�?*/
+    background: #f8f9fa;
+    color: #24292e;
     border-radius: 4px;
     overflow-x: auto;
     overflow-y: auto;
     max-width: 100%;
-    max-height: 300px;
-    line-height: 1.2; /* 减小代码块行�?*/
+    max-height: 400px;
+    line-height: 1.4;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 13px;
+}
+
+/* 行内代码 */
+.message-assistant code.inline-code,
+.message-assistant :not(pre) > code {
+    background: #f0f0f0;
+    padding: 2px 6px;
+    border-radius: 3px;
+    color: #e83e8c;
+    font-size: 0.9em;
+    color: #e74c3c;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
 }
 
 /* 自定义滚动条样式，让它融入代码框背景 */
@@ -351,24 +372,24 @@ body {
 }
 
 .message-assistant pre code::-webkit-scrollbar-track {
-    background: #2c3e50;
+    background: #e9ecef;
     border-radius: 4px;
 }
 
 .message-assistant pre code::-webkit-scrollbar-thumb {
-    background: #34495e;
+    background: #ced4da;
     border-radius: 4px;
 }
 
 .message-assistant pre code::-webkit-scrollbar-thumb:hover {
-    background: #4a5f7a;
+    background: #adb5bd;
 }
 
 .message-assistant pre code::-webkit-scrollbar-corner {
-    background: #2c3e50;
+    background: #e9ecef;
 }
 
-/* AI消息底部信息和按钮样�?*/
+/* AI消息底部信息和按钮样�?*/
 .message-footer {
     margin-top: 6px;
     padding-top: 6px;
@@ -419,20 +440,49 @@ body {
     margin-top: 2px;
 }
 
+/* 代码块头�?*/
 .code-header {
     position: absolute;
     top: 0;
     right: 0;
     left: 0;
-    background: #34495e;
-    padding: 5px 10px;
+    background: #e9ecef;
+    padding: 4px 10px;
     border-radius: 4px 4px 0 0;
     display: flex;
-    justify-content: flex-end;
+    justify-content: space-between;
+    align-items: center;
     z-index: 1;
-    height: 25px;
+    height: 28px;
+    border-bottom: 1px solid #dee2e6;
 }
 
+.code-lang {
+    font-size: 11px;
+    color: #6c757d;
+    text-transform: uppercase;
+    font-weight: 500;
+}
+
+.code-copy-btn {
+    padding: 2px 8px;
+    font-size: 11px;
+    background: #6c757d;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.code-copy-btn:hover {
+    background: #5a6268;
+}
+
+.code-copy-btn.copied {
+    background: #28a745;
+}
+
+/* 兼容旧的复制按钮样式 */
 .copy-code-btn {
     padding: 4px;
     font-size: 12px;
@@ -490,13 +540,13 @@ body {
     flex: 1;
     resize: none;
     min-height: 60px;
-    max-height: 150px; /* 设置最大高度上�?*/
+    max-height: 150px; /* 设置最大高度上�?*/
     padding: 10px;
     border: 1px solid #ddd;
     border-radius: 4px;
     font-family: inherit;
     font-size: calc(var(--base-font-size) * 1);
-    overflow-y: auto; /* 超过最大高度时显示滚动�?*/
+    overflow-y: auto; /* 超过最大高度时显示滚动�?*/
 }
 
 .chat-input-container textarea:focus {
@@ -519,7 +569,7 @@ body {
     background: #2980b9;
 }
 
-/* Modal 样式 - 继续保持简洁风�?*/
+/* Modal 样式 - 继续保持简洁风�?*/
 .modal {
     position: fixed;
     inset: 0;
@@ -582,7 +632,7 @@ body {
     overflow-y: auto;
 }
 
-/* 其余样式保持简�?.. */
+/* 其余样式保持简�?.. */
 .provider-list-container, .kb-list-container, .mcp-list-container {
     flex: 0.8;
     border-right: 1px solid #ddd;
@@ -684,7 +734,7 @@ h3 {
     cursor: pointer;
 }
 
-/* 添加缺失的样�?*/
+/* 添加缺失的样�?*/
 .provider-main, .kb-main, .mcp-main {
     font-size: 13px;
 }
@@ -717,7 +767,7 @@ h3 {
     color: #721c24;
 }
 
-/* 改进的按钮样�?- 无边框链接风�?*/
+/* 改进的按钮样�?- 无边框链接风�?*/
 .provider-actions button, .kb-actions button, .mcp-actions button {
     margin-left: 8px;
     padding: 4px 8px;
@@ -800,7 +850,7 @@ h3 {
     flex: 0.6;
 }
 
-/* 模型功能复选框样式 - 改进�?*/
+/* 模型功能复选框样式 - 改进�?*/
 .model-capabilities {
     display: flex;
     gap: 12px;
@@ -907,7 +957,7 @@ h3 {
     padding: 0;
 }
 
-/* 列表后面跟段落时增加下边�?- 已注释，避免间距不均匀 */
+/* 列表后面跟段落时增加下边�?- 已注释，避免间距不均匀 */
 /*
 .message-assistant .message-content ul + p,
 .message-assistant .message-content ol + p {
@@ -915,7 +965,7 @@ h3 {
 }
 */
 
-/* 去掉对话框横�?*/
+/* 去掉对话框横�?*/
 .message-footer {
     border-top: none;
     margin-top: 8px;
@@ -990,7 +1040,7 @@ h3 {
 .message.message-assistant :where(h1, h2, h3, h4, h5, h6) {
     line-height: 1.25;
     font-weight: 700;
-    color: #2c3e50;
+    color: #1d4e4e;
     border: 0 !important;
     padding: 0 !important;
 }
@@ -1043,7 +1093,7 @@ h3 {
     background: #f4f4f4;
     padding: 0.15em 0.35em;
     border-radius: 3px;
-    color: #e74c3c;
+    color: #3498db;
 }
 
 /* Code blocks */
@@ -1056,7 +1106,7 @@ h3 {
 .message.message-assistant pre code {
     display: block;
     padding: 0.6em 0.8em !important;
-    padding-top: 28px !important;
+    padding-top: 38px !important; /* 增加顶部内边距，避免被复制按钮遮�?*/
     background: #2c3e50;
     color: #ecf0f1 !important;
     border-radius: 4px;

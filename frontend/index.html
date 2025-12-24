@@ -9,12 +9,17 @@
     <link rel="stylesheet" href="style.css">
     
     <!-- 引入Marked.js库用于Markdown解析 -->
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
     
     <!-- 引入DOMPurify用于XSS防护 -->
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.5/dist/purify.min.js"></script>
+
+    <!-- 代码高亮 -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css">
+    <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
 </head>
 <body>
+
 
 <div class="app-container">
     <div class="sidebar">
@@ -54,7 +59,7 @@
                 <label>
                     <input type="checkbox" id="toggle-web"> 🌐 联网搜索
                     <select id="web-search-source" style="margin-left: 5px; font-size: 12px; display: none;">
-                        <option value="bing">必应搜索</option>
+                        <option value="duckduckgo">DuckDuckGo（免费）</option>
                         <option value="tavily">Tavily</option>
                     </select>
                 </label>
@@ -132,10 +137,6 @@
                 <div class="settings-section">
                     <h4>🛠️ 系统管理</h4>
                     <div class="settings-row">
-                        <label>数据库初始化</label>
-                        <button type="button" id="init-database-btn">初始化数据库</button>
-                    </div>
-                    <div class="settings-row">
                         <label>模型提供商管理</label>
                         <button type="button" id="manage-providers-btn">管理 Provider</button>
                     </div>
@@ -148,8 +149,17 @@
                         <button type="button" id="manage-mcp-btn">管理 MCP</button>
                     </div>
                     <div class="settings-row">
-                        <label>重新渲染消息</label>
-                        <button type="button" id="rerender-messages-btn">重新渲染所有消息</button>
+                        <label>导出调试日志</label>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <select id="export-logs-hours" style="width: 100px;">
+                                <option value="1">1小时</option>
+                                <option value="6">6小时</option>
+                                <option value="24" selected>24小时</option>
+                                <option value="72">3天</option>
+                                <option value="168">7天</option>
+                            </select>
+                            <button type="button" id="export-logs-btn">导出日志</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -256,29 +266,54 @@
                     </div>
                     <div class="form-row">
                         <label>向量模型</label>
-                        <select id="embedding-model-select"></select>
+                        <select id="embedding-model-select">
+                            <option value="">不使用向量模型</option>
+                        </select>
+                        <small style="color: #666; font-size: 11px; margin-top: 4px; display: block;">
+                            💡 无 API？可使用 <a href="#" id="setup-local-rag-link" style="color: #1d4e4e;">本地 RAG MCP</a> 替代
+                        </small>
                     </div>
                     <div class="form-row">
-                        <label>重排模型（可选）</label>
-                        <select id="rerank-model-select">
-                            <option value="">不使用重排模型</option>
-                        </select>
-                    </div>
-                    <div class="form-row">
-                        <label>视觉模型（可选）</label>
-                        <select id="kb-vision-model-select">
-                            <option value="">不使用视觉模型</option>
-                        </select>
+                        <label style="flex-direction: row; display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="kb-extract-graph" checked style="width: auto;"> 
+                            自动提取知识图谱
+                        </label>
+                        <small style="color: #666; font-size: 11px;">从文档中提取实体和关系，增强检索效果</small>
                     </div>
                     <div class="form-row">
                         <label>选择文件 (txt/md/csv)</label>
                         <input type="file" id="kb-file" required>
                     </div>
                     <div class="form-actions">
-                        <button type="submit">上传并构建向量</button>
+                        <button type="submit">上传并构建知识库</button>
                     </div>
                 </form>
                 <div id="kb-upload-status" class="status-text"></div>
+                
+                <!-- 知识图谱统计 -->
+                <div id="kb-graph-stats" style="margin-top: 15px; padding: 12px; background: #f5f5f5; border-radius: 6px; display: none;">
+                    <h4 style="margin: 0 0 8px 0; color: #333; font-size: 13px;">📊 知识图谱统计</h4>
+                    <div id="kb-graph-stats-content" style="font-size: 12px; color: #555;"></div>
+                </div>
+                
+                <!-- 本地 RAG MCP 推荐 -->
+                <div id="local-rag-info" style="display: none; margin-top: 15px; padding: 12px; background: #f0f7f0; border-radius: 6px; border: 1px solid #c8e6c9;">
+                    <h4 style="margin: 0 0 8px 0; color: #2e7d32; font-size: 13px;">🚀 本地 RAG MCP（推荐）</h4>
+                    <p style="margin: 0 0 8px 0; font-size: 12px; color: #555;">
+                        无需 API Key，完全本地运行的知识库检索方案：
+                    </p>
+                    <ul style="margin: 0 0 10px 0; padding-left: 20px; font-size: 12px; color: #555;">
+                        <li>支持 PDF、DOCX、TXT、Markdown</li>
+                        <li>本地向量模型，离线可用</li>
+                        <li>语义搜索，理解自然语言</li>
+                    </ul>
+                    <div style="background: #fff; padding: 8px; border-radius: 4px; font-family: monospace; font-size: 11px; overflow-x: auto;">
+                        <code>npx mcp-local-rag</code>
+                    </div>
+                    <p style="margin: 8px 0 0 0; font-size: 11px; color: #666;">
+                        <a href="https://github.com/shinpr/mcp-local-rag" target="_blank" style="color: #1d4e4e;">查看文档 →</a>
+                    </p>
+                </div>
             </div>
         </div>
     </div>
@@ -388,31 +423,28 @@
                         <div class="form-row">
                             <label>默认搜索源</label>
                             <select id="search-default-source">
-                                <option value="bing">必应搜索</option>
-                                <option value="tavily">Tavily</option>
+                                <option value="duckduckgo" selected>DuckDuckGo（免费）</option>
+                                <option value="tavily">Tavily（需API Key）</option>
                             </select>
                         </div>
                         
                         <div class="form-row">
-                            <label>Bing Search API Key</label>
-                            <input type="password" id="bing-api-key" placeholder="输入Bing Search API Key（可选）">
+                            <label>Tavily API Key（可选）</label>
+                            <input type="password" id="search-tavily-api-key" placeholder="输入Tavily API Key">
                             <small style="color: #666; font-size: 12px; margin-top: 5px; display: block;">
-                                获取地址: <a href="https://www.microsoft.com/en-us/bing/apis/bing-web-search-api" target="_blank">Microsoft Bing Search API</a>
+                                获取地址: <a href="https://tavily.com/" target="_blank">Tavily.com</a>（有免费额度）
                             </small>
                         </div>
                         
-                        <div class="form-row">
-                            <label>Tavily API Key</label>
-                            <input type="password" id="search-tavily-api-key" placeholder="输入Tavily API Key（可选）">
-                            <small style="color: #666; font-size: 12px; margin-top: 5px; display: block;">
-                                获取地址: <a href="https://tavily.com/" target="_blank">Tavily.com</a>
+                        <div style="background: #e8f5e9; padding: 10px; border-radius: 4px; margin-top: 10px;">
+                            <small style="color: #2e7d32;">
+                                💡 DuckDuckGo 搜索完全免费，无需配置 API Key，开箱即用！
                             </small>
                         </div>
                     </div>
                     
                     <div class="form-actions">
                         <button type="submit">保存配置</button>
-                        <button type="button" id="search-config-test">测试连接</button>
                         <button type="button" id="search-config-reset">重置</button>
                     </div>
                 </form>
@@ -423,8 +455,11 @@
     </div>
 </div>
 
+<!-- 引入Markdown处理模块 -->
+<script src="markdown.js?v=90"></script>
+
 <!-- 引入外部JavaScript -->
-<script src="script.js"></script>
+<script src="script.js?v=90"></script>
 
 </body>
 </html>

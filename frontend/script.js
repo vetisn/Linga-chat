@@ -1,60 +1,10 @@
 // 本地 AI 助手 - JavaScript 主文件
 
-// 检查并配置外部库
-function initializeExternalLibraries() {
-    // 检查marked库
-    if (typeof marked === 'undefined') {
-        console.warn("marked库未加载，使用fallback");
-        window.marked = {
-            parse: function(text) {
-                // 简单的文本处理，将换行转换为<br>
-                return text.replace(/\n/g, '<br>');
-            }
-        };
-    } else {
-        console.log("marked库已加载，版本:", marked.version || "未知");
-        try {
-            // 配置marked选项
-            const markedOptions = {
-                breaks: true,      // 启用换行符转换为<br>
-                gfm: true,         // 启用GitHub风格的Markdown
-                headerIds: false,  // 禁用标题ID
-                mangle: false      // 禁用邮箱地址混淆
-            };
-            
-            if (typeof marked.setOptions === 'function') {
-                marked.setOptions(markedOptions);
-                console.log("marked配置完成");
-            } else if (typeof marked.use === 'function') {
-                // 新版本的marked使用use方法
-                marked.use(markedOptions);
-                console.log("marked配置完成(新版本)");
-            }
-        } catch (e) {
-            console.error("marked配置失败:", e);
-        }
-    }
-
-    // 检查DOMPurify库
-    if (typeof DOMPurify === 'undefined') {
-        console.warn("DOMPurify库未加载，XSS防护功能不可用");
-    } else {
-        console.log("DOMPurify库已加载，XSS防护已启用");
-    }
-}
-
-// 初始化外部库
-initializeExternalLibraries();
-
 // API基础URL配置
 const apiBase = "";
 
 // 常量定义
 const TOOL_SETTINGS_KEY = "tool_settings_v1";
-const DEBUG_STREAM = false; // 调试开关，控制流式输出日志
-// 你可以按体验调整：更大 = 更快但"跳字"更明显；更小 = 更丝滑但更吃 CPU
-const STREAM_FLUSH_INTERVAL_MS = 80;   // 建议 60~120
-const STREAM_FLUSH_MIN_CHARS = 120;    // 建议 80~200
 
 // 全局状态变量
 let currentConversationId = null;
@@ -70,208 +20,36 @@ let currentSettings = {
     availableModels: []
 };
 
+let autoTitling = false;
+
+function normalizeApiResponse(json) {
+    if (json && typeof json === "object" && "data" in json) {
+        return json.data;
+    }
+    return json;
+}
+
 // 流式传输控制变量
 let isStreaming = false;
 let currentStreamController = null;
 let currentStreamingMessageEl = null; // 跟踪当前正在流式输出的消息元素
-let currentFullText = ""; // 跟踪当前流式输出的完整文本
 
-// 流式UI状态管理
-let streamUiState = {
-    pending: "",
-    flushTimer: null,
-    scrollTimer: null,
-    lastFlushAt: 0
-};
+const autoTitleRequested = new Set();
 
-// DOM元素变量 - 统一声明，避免重复声明错误
+
+
+// DOM元素变量 - 统一声明
 let conversationListEl, chatMessagesEl, chatTitleEl, modelSelectEl, providerSelectEl;
 let userInputEl, toggleKnowledgeEl, toggleMcpEl, toggleWebEl, toggleStreamEl, webSearchSourceEl;
 let providerModalEl, providerListEl, providerFormEl;
 let knowledgeModalEl, kbListEl, kbFormEl, kbSelectEl, kbUploadFormEl, kbUploadStatusEl, embeddingModelSelectEl;
 let mcpModalEl, mcpListEl, mcpFormEl, settingsModalEl;
 
-// 针对单个消息的渲染节流（每条消息一个定时器，避免互相抢）
-const renderTimers = new WeakMap();
-
-
-
-function scheduleScrollToBottom() {
-    if (streamUiState.scrollTimer) return;
-    streamUiState.scrollTimer = setTimeout(() => {
-        streamUiState.scrollTimer = null;
-        scrollToBottom();
-    }, 120);
-}
-
-function cancelScheduledRender(contentEl) {
-    const t = renderTimers.get(contentEl);
-    if (t) clearTimeout(t);
-    renderTimers.delete(contentEl);
-}
-
-
-function renderMarkdownToEl(contentEl, rawMd) {
-    if (!contentEl) return;
-
-    // 保存原始 markdown，后续重渲染/复制都用它
-    const msgEl = contentEl.closest(".message");
-    if (msgEl) msgEl.dataset.rawContent = rawMd;
-
-    try {
-        if (typeof marked !== "undefined" && typeof marked.parse === "function") {
-            const htmlContent = marked.parse(rawMd || "");
-            // 使用DOMPurify清理HTML内容，防止XSS攻击
-            if (typeof DOMPurify !== "undefined" && typeof DOMPurify.sanitize === "function") {
-                contentEl.innerHTML = DOMPurify.sanitize(htmlContent);
-            } else {
-                // 如果DOMPurify不可用，仍然使用原始HTML（开发环境）
-                console.warn("DOMPurify不可用，建议在生产环境中使用");
-                contentEl.innerHTML = htmlContent;
-            }
-        } else {
-            // fallback: 当marked库不可用时，使用纯文本显示
-            console.warn("marked库不可用，使用纯文本显示");
-            contentEl.textContent = rawMd || "";
-        }
-    } catch (e) {
-        // 解析失败时退回纯文本（避免页面炸掉）
-        console.error("Markdown解析失败:", e);
-        contentEl.textContent = rawMd || "";
+// 滚动到底部
+function scrollToBottom() {
+    if (chatMessagesEl) {
+        chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
     }
-}
-
-function scheduleMarkdownRender(contentEl, rawMd, wait = 80) {
-    if (!contentEl) return;
-
-    // 记住最新 rawMd（节流期间可能继续增长）
-    contentEl._latestRawMd = rawMd;
-
-    // 取消上一次计划
-    cancelScheduledRender(contentEl);
-
-    const t = setTimeout(() => {
-        // 如果切换对话导致 DOM 被清空，元素已不在文档中，则跳过，避免串台/错位
-        if (!document.contains(contentEl)) return;
-
-        renderMarkdownToEl(contentEl, contentEl._latestRawMd);
-    }, wait);
-
-    renderTimers.set(contentEl, t);
-}
-
-// ===== 流式 UI 缓冲：把高频 token 合并成低频渲染，显著提升速度与稳定性 =====
-
-function resetStreamUiState() {
-    streamUiState.pending = "";
-    streamUiState.lastFlushAt = 0;
-    if (streamUiState.flushTimer) clearTimeout(streamUiState.flushTimer);
-    if (streamUiState.scrollTimer) clearTimeout(streamUiState.scrollTimer);
-    streamUiState.flushTimer = null;
-    streamUiState.scrollTimer = null;
-}
-
-function enqueueStreamText(text) {
-    if (!text) return;
-    streamUiState.pending += text;
-}
-
-function scheduleScrollToBottom() {
-    if (streamUiState.scrollTimer) return;
-    streamUiState.scrollTimer = setTimeout(() => {
-        streamUiState.scrollTimer = null;
-        scrollToBottom();
-    }, 120);
-}
-
-/**
- * 批量 flush：把 pending 合并进 fullText，并对"当前这条assistant消息"做全量重渲染
- * @param {HTMLElement} assistantEl - 当前这条assistant message的根节点
- * @param {Function} applyAppend - (appendText) => fullText （由 sendMessage 提供闭包）
- */
-function scheduleFlushStream(assistantEl, applyAppend) {
-    if (!assistantEl) return;
-    const now = Date.now();
-    const dueByTime = (now - streamUiState.lastFlushAt) >= STREAM_FLUSH_INTERVAL_MS;
-    const dueBySize = streamUiState.pending.length >= STREAM_FLUSH_MIN_CHARS;
-
-    const doFlush = () => {
-        streamUiState.flushTimer = null;
-        if (!streamUiState.pending) return;
-        const contentEl = assistantEl.querySelector(".message-content");
-        if (!contentEl) return;
-
-        // 如果切换对话导致 DOM 已经被清空，直接不渲染，避免串台
-        if (!document.contains(contentEl)) {
-            streamUiState.pending = "";
-            return;
-        }
-
-        const appendText = streamUiState.pending;
-        streamUiState.pending = "";
-        streamUiState.lastFlushAt = Date.now();
-
-        const fullText = applyAppend(appendText);
-
-        // 我们已经在 flush 级别节流了，这里直接渲染（wait=0）
-        scheduleMarkdownRender(contentEl, fullText, 0);
-        scheduleScrollToBottom();
-    };
-
-    if (dueByTime || dueBySize) {
-        doFlush();
-        return;
-    }
-
-    if (streamUiState.flushTimer) return;
-    streamUiState.flushTimer = setTimeout(doFlush, STREAM_FLUSH_INTERVAL_MS);
-}
-
-function doFlush(assistantEl, fullTextGetter) {
-    if (!assistantEl) return;
-    const contentEl = assistantEl.querySelector(".message-content");
-    if (!contentEl) return;
-    if (!streamUiState.pendingText) return;
-
-    // 合并
-    const append = streamUiState.pendingText;
-    streamUiState.pendingText = "";
-    streamUiState.lastFlushAt = Date.now();
-
-    // 取 fullText（由外部闭包提供），做“全量重渲染”
-    const fullText = fullTextGetter(append); // 由 sendMessage 提供一个合并方法
-    scheduleMarkdownRender(contentEl, fullText, 0); // 这里 wait=0，因为我们已经做了 flush 节流
-
-    scheduleScrollToBottom();
-}
-
-function scheduleScrollToBottom() {
-    if (streamUiState.scrollTimer) return;
-    streamUiState.scrollTimer = setTimeout(() => {
-        streamUiState.scrollTimer = null;
-        scrollToBottom();
-    }, 120);
-}
-
-function resetStreamUiState() {
-    streamUiState.pendingText = "";
-    streamUiState.lastFlushAt = 0;
-    if (streamUiState.flushTimer) clearTimeout(streamUiState.flushTimer);
-    if (streamUiState.scrollTimer) clearTimeout(streamUiState.scrollTimer);
-    streamUiState.flushTimer = null;
-    streamUiState.scrollTimer = null;
-}
-
-
-
-// 重新渲染所有消息（用于切换模式或手动刷新）
-function rerenderAllMessages() {
-    document.querySelectorAll(".message.message-assistant .message-content").forEach(el => {
-        const msgEl = el.closest(".message");
-        const raw = msgEl?.dataset?.rawContent ?? el.textContent ?? "";
-        renderMarkdownToEl(el, raw);
-        addCopyButtonsToCodeBlocks(el);
-    });
 }
 
 // 初始化DOM元素引用
@@ -351,7 +129,7 @@ function saveToolSettings() {
             mcp: toggleMcpEl ? toggleMcpEl.checked : false,
             web: toggleWebEl ? toggleWebEl.checked : false,
             stream: toggleStreamEl ? toggleStreamEl.checked : true,
-            webSearchSource: webSearchSourceEl ? webSearchSourceEl.value : "bing"
+            webSearchSource: webSearchSourceEl ? webSearchSourceEl.value : "duckduckgo"
         };
         localStorage.setItem(TOOL_SETTINGS_KEY, JSON.stringify(settings));
     } catch (e) {
@@ -402,7 +180,7 @@ async function loadSettings() {
         if (densitySelect) densitySelect.value = settings.density || "normal";
         
         const searchDefaultSource = document.getElementById("search-default-source");
-        if (searchDefaultSource) searchDefaultSource.value = settings.default_search_source || "bing";
+        if (searchDefaultSource) searchDefaultSource.value = settings.default_search_source || "duckduckgo";
         
         // 获取所有可用模型
         await loadModels(); // 确保先加载模型
@@ -443,7 +221,7 @@ async function loadSettings() {
         
         // 设置搜索源默认值
         if (webSearchSourceEl) {
-            webSearchSourceEl.value = settings.default_search_source || "bing";
+            webSearchSourceEl.value = settings.default_search_source || "duckduckgo";
         }
     } catch(e) { 
         console.error("加载设置失败:", e); 
@@ -487,7 +265,8 @@ async function loadModels() {
     try {
         const res = await fetch(`${apiBase}/models/all`);
         if (!res.ok) return;
-        const data = await res.json();
+        const raw = await res.json();
+        const data = normalizeApiResponse(raw) || {};
         
         if (!modelSelectEl) {
             console.warn("modelSelectEl not found, skipping loadModels");
@@ -510,7 +289,9 @@ async function loadConversations() {
     try {
         const res = await fetch(`${apiBase}/conversations`);
         if (!res.ok) return;
-        conversations = await res.json();
+        const raw = await res.json();
+        const data = normalizeApiResponse(raw);
+        conversations = Array.isArray(data) ? data : (data?.conversations || []);
         renderConversationList();
     } catch(e) { console.error(e); }
 }
@@ -519,10 +300,12 @@ async function loadProviders() {
     try {
         const res = await fetch(`${apiBase}/providers`);
         if (!res.ok) return;
-        providers = await res.json();
+        const raw = await res.json();
+        providers = normalizeApiResponse(raw) || [];
         renderProviderSelect();
     } catch(e) { console.error(e); }
 }
+
 
 function renderProviderSelect() {
     if (!providerSelectEl) return;
@@ -542,7 +325,8 @@ async function loadKnowledgeBases() {
     try {
         const res = await fetch(`${apiBase}/knowledge/bases`);
         if (!res.ok) return;
-        knowledgeBases = await res.json();
+        const raw = await res.json();
+        knowledgeBases = normalizeApiResponse(raw) || [];
     } catch(e) { console.error(e); }
 }
 
@@ -550,7 +334,8 @@ async function loadMCPServers() {
     try {
         const res = await fetch(`${apiBase}/mcp/servers`);
         if (!res.ok) return;
-        mcpServers = await res.json();
+        const raw = await res.json();
+        mcpServers = normalizeApiResponse(raw) || [];
     } catch(e) { console.error(e); }
 }
 
@@ -559,7 +344,8 @@ async function loadEmbeddingModels() {
     try {
         const res = await fetch(`${apiBase}/knowledge/embedding-models`);
         if (!res.ok) return;
-        const data = await res.json();
+        const raw = await res.json();
+        const data = normalizeApiResponse(raw) || {};
         
         if (!embeddingModelSelectEl) {
             console.warn("embeddingModelSelectEl not found, skipping loadEmbeddingModels");
@@ -568,14 +354,23 @@ async function loadEmbeddingModels() {
         
         embeddingModelSelectEl.innerHTML = "";
         
+        // 显示/隐藏本地 RAG 推荐
+        const localRagInfo = document.getElementById("local-rag-info");
+        
         if (!data.models || data.models.length === 0) {
             const opt = document.createElement("option");
             opt.value = "";
             opt.textContent = data.message || "无可用向量模型";
             opt.disabled = true;
             embeddingModelSelectEl.appendChild(opt);
+            
+            // 没有向量模型时显示本地 RAG 推荐
+            if (localRagInfo) localRagInfo.style.display = "block";
             return;
         }
+        
+        // 有向量模型时隐藏推荐
+        if (localRagInfo) localRagInfo.style.display = "none";
         
         const models = data.models || [];
         models.forEach(m => {
@@ -779,7 +574,7 @@ function renderConversationList() {
                             throw new Error('对话不存在');
                         }
                         
-                        const newTitle = prompt('请输入新的对话标题:', conversation.title || '');
+                        const newTitle = prompt('请输入新的对话标题', conversation.title || '');
                         if (newTitle === null) return; // 用户取消
                         if (!newTitle.trim()) {
                             alert('标题不能为空');
@@ -814,8 +609,8 @@ function renderConversationList() {
                         }
                         formData.append('is_pinned', conversation.is_pinned ? 'false' : 'true');
                         
-                        const res = await fetch(`${apiBase}/conversations/${conversationId}`, {
-                            method: 'PUT',
+                        const res = await fetch(`${apiBase}/conversations/${conversationId}/pin`, {
+                            method: 'POST',
                             body: formData
                         });
                         if (!res.ok) throw new Error('置顶操作失败');
@@ -826,6 +621,7 @@ function renderConversationList() {
                         alert('置顶操作失败: ' + error.message);
                     }
                 }
+
             } catch (error) {
                 console.error('Error handling action button click:', error);
             }
@@ -845,13 +641,15 @@ function renderConversationList() {
         }
     });
 }
-// 消息相关函数
-function scrollToBottom() {
-    if (chatMessagesEl) {
-        chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
-    }
-}
 
+/**
+ * 添加消息到聊天区域
+ * @param {string} role - 'user' 或 'assistant'
+ * @param {string} content - 消息内容（Markdown 格式）
+ * @param {object} tokenInfo - token 统计信息
+ * @param {boolean} showFooter - 是否显示底部操作栏
+ * @returns {HTMLElement} 消息元素
+ */
 function appendMessage(role, content, tokenInfo = null, showFooter = true) {
     if (!chatMessagesEl) return null;
     
@@ -859,47 +657,65 @@ function appendMessage(role, content, tokenInfo = null, showFooter = true) {
     msgEl.className = "message " + (role === "user" ? "message-user" : "message-assistant");
     
     if (role === "assistant") {
+        // AI 消息：使用 Markdown 渲染
         const contentEl = document.createElement("div");
         contentEl.className = "message-content";
-        
-        // 存储原始markdown内容，供复制按钮使用
-        msgEl.dataset.rawContent = content || "";
-        
-        try {
-            // 使用统一的渲染函数
-            renderMarkdownToEl(contentEl, content || "");
-            // 为代码块添加复制按钮
-            addCopyButtonsToCodeBlocks(contentEl);
-        } catch (e) {
-            console.error("Markdown解析失败:", e);
-            contentEl.textContent = content || "";
-        }
-        
         msgEl.appendChild(contentEl);
         
-        // 只有在showFooter为true时才添加底部信息和按钮
+        // 存储原始 Markdown 内容
+        msgEl.dataset.rawContent = content || "";
+        
+        // 只有当有内容时才渲染
+        if (content && content.length > 0) {
+            renderMarkdown(contentEl, content, true);
+        }
+        
+        // 添加底部操作栏
         if (showFooter) {
             addMessageFooter(msgEl, content, tokenInfo);
         }
     } else {
-        // 用户消息
-        msgEl.textContent = content || "";
+        // 用户消息：纯文本显示
+        const textNode = document.createTextNode(content || "");
+        msgEl.appendChild(textNode);
         
-        // 添加用户消息的操作按钮
+        // 添加编辑按钮
         const actionsEl = document.createElement("div");
         actionsEl.className = "user-message-actions";
-        
         const editBtn = document.createElement("button");
         editBtn.textContent = "✏️";
         editBtn.onclick = () => editAndResendMessage(content);
         actionsEl.appendChild(editBtn);
-        
         msgEl.appendChild(actionsEl);
     }
     
     chatMessagesEl.appendChild(msgEl);
     scrollToBottom();
     return msgEl;
+}
+
+/**
+ * 统一的 Markdown 渲染函数 - 唯一入口
+ * @param {HTMLElement} el - 目标元素
+ * @param {string} markdown - Markdown 内容
+ * @param {boolean} isComplete - 是否为最终渲染
+ */
+function renderMarkdown(el, markdown, isComplete = true) {
+    if (!el) return;
+    
+    if (window.MarkdownEngine && window.MarkdownEngine.renderToEl) {
+        window.MarkdownEngine.renderToEl(el, markdown, isComplete);
+        if (isComplete && window.MarkdownEngine.addCopyButtons) {
+            window.MarkdownEngine.addCopyButtons(el);
+        }
+    } else {
+        // 降级：使用 marked 直接渲染
+        if (typeof marked !== 'undefined') {
+            el.innerHTML = DOMPurify ? DOMPurify.sanitize(marked.parse(markdown)) : marked.parse(markdown);
+        } else {
+            el.textContent = markdown;
+        }
+    }
 }
 
 // 添加消息底部信息和按钮的函数
@@ -926,7 +742,18 @@ function addMessageFooter(msgEl, content, tokenInfo, isLoading = false) {
         const contentEl = msgEl.querySelector(".message-content");
         // 尝试获取存储的原始markdown，如果没有则使用textContent
         const currentContent = msgEl.dataset.rawContent || (contentEl ? contentEl.textContent : content);
-        copyToClipboard(currentContent, copyMdBtn, "Markdown");
+        navigator.clipboard.writeText(currentContent).then(() => {
+            const originalText = copyMdBtn.textContent;
+            copyMdBtn.textContent = "✓ 已复制";
+            copyMdBtn.classList.add("success");
+            setTimeout(() => {
+                copyMdBtn.textContent = originalText;
+                copyMdBtn.classList.remove("success");
+            }, 2000);
+        }).catch(() => {
+            copyMdBtn.textContent = "✗ 复制失败";
+            setTimeout(() => copyMdBtn.textContent = "📋 Markdown", 2000);
+        });
     };
     actionsEl.appendChild(copyMdBtn);
     
@@ -937,7 +764,18 @@ function addMessageFooter(msgEl, content, tokenInfo, isLoading = false) {
         // 获取当前最新的纯文本内容
         const contentEl = msgEl.querySelector(".message-content");
         const currentContent = contentEl ? contentEl.textContent : content;
-        copyToClipboard(currentContent, copyTxtBtn, "纯文本");
+        navigator.clipboard.writeText(currentContent).then(() => {
+            const originalText = copyTxtBtn.textContent;
+            copyTxtBtn.textContent = "✓ 已复制";
+            copyTxtBtn.classList.add("success");
+            setTimeout(() => {
+                copyTxtBtn.textContent = originalText;
+                copyTxtBtn.classList.remove("success");
+            }, 2000);
+        }).catch(() => {
+            copyTxtBtn.textContent = "✗ 复制失败";
+            setTimeout(() => copyTxtBtn.textContent = "📄 纯文本", 2000);
+        });
     };
     actionsEl.appendChild(copyTxtBtn);
     
@@ -1026,7 +864,7 @@ async function regenerateLastMessage() {
     formData.append("enable_mcp", toggleMcpEl && toggleMcpEl.checked ? "true" : "false");
     formData.append("enable_web_search", toggleWebEl && toggleWebEl.checked ? "true" : "false");
     if (toggleWebEl && toggleWebEl.checked && webSearchSourceEl) {
-        formData.append("web_search_source", webSearchSourceEl.value || "bing");
+        formData.append("web_search_source", webSearchSourceEl.value || "duckduckgo");
     }
     const providerId = providerSelectEl && providerSelectEl.value ? parseInt(providerSelectEl.value) : null;
     if (providerId !== null && !isNaN(providerId)) {
@@ -1059,10 +897,7 @@ async function regenerateLastMessage() {
     isStreaming = true;
     updateSendButton();
     currentStreamController = new AbortController();
-    
-    resetStreamUiState(); // 重置流式UI状态
-    
-    console.log("重新生成：开始流式传输，对话ID:", currentConversationId);
+
     
     // 创建AI消息元素，不显示底部（等输出完成后再添加）
     const assistantEl = appendMessage("assistant", "", null, false);
@@ -1082,29 +917,23 @@ async function regenerateLastMessage() {
             }
         });
         
-        console.log("重新生成：收到响应，状态:", res.status);
-        
         if (!res.ok) {
             const err = await res.text();
-            console.error("重新生成：请求失败:", err);
+            console.error("重新生成：请求失败", err);
             throw new Error(err || res.statusText);
         }
         if (!res.body) throw new Error("ReadableStream not supported");
         const reader = res.body.getReader();
         const decoder = new TextDecoder("utf-8");
         
-        console.log("重新生成：开始读取流式数据...");
-        
-        // 更稳的 SSE 解析：按 \n\n 分隔事件，保留 data 多行换行
+        // 更稳定 SSE 解析：按 \n\n 分隔事件，保留 data 多行换行
         let sseBuffer = "";
         let eventName = "message";
+        let streamDone = false; // 使用单独的标志来标记流式输出完成
 
-        while (!currentStreamController.signal.aborted) {
+        while (!currentStreamController.signal.aborted && !streamDone) {
             const { done, value } = await reader.read();
-            if (done) {
-                console.log("流式数据读取完成");
-                break;
-            }
+            if (done) break;
 
             sseBuffer += decoder.decode(value, { stream: true });
 
@@ -1126,106 +955,90 @@ async function regenerateLastMessage() {
                     if (line.startsWith("event:")) {
                         localEventName = line.slice(6).trim() || "message";
                     } else if (line.startsWith("data:")) {
-                        // 重要：不要 trimStart，SSE data: 后的前导空格可能是内容的一部分
-                        dataLines.push(line.slice(5));
+                        // SSE 标准格式: "data: content" 或 "data:content"
+                        let data = line.slice(5);
+                        // 如果第一个字符是空格，去掉它（SSE 标准允许 data: 后有一个空格）
+                        if (data.startsWith(' ')) {
+                            data = data.slice(1);
+                        }
+                        dataLines.push(data);
                     }
                 }
 
                 // 重要：多行 data 用 \n 连接（SSE 规范）
                 const payload = dataLines.join("\n");
 
-                if (DEBUG_STREAM) {
-                    console.log(`处理事件 ${localEventName}:`, payload.length > 80 ? payload.substring(0, 80) + "…" : payload);
-                }
-
                 if (localEventName === "meta") {
                     try {
                         tokenInfo = JSON.parse(payload);
-                        console.log("解析到token信息:", tokenInfo);
-                    } catch (e) {
-                        console.warn("解析meta信息失败:", e);
-                    }
+                    } catch (e) {}
                     continue;
                 }
 
                 if (localEventName === "ack") {
-                    console.log("收到ack确认");
                     continue;
                 }
 
                 // message 正文
                 if (payload === "[DONE]") {
-                    console.log("收到完成标记");
-                    
-                    // DONE：把最后残留的 pending 强制刷到 DOM
-                    if (streamUiState.pending) {
-                        scheduleFlushStream(assistantEl, (appendText) => {
-                            fullText += appendText;
-                            assistantEl.dataset.rawContent = fullText;
-                            return fullText;
-                        });
-                        // 立即再触发一次（防止 flushTimer 还没到）
-                        streamUiState.lastFlushAt = 0;
-                        scheduleFlushStream(assistantEl, (appendText) => {
-                            fullText += appendText;
-                            assistantEl.dataset.rawContent = fullText;
-                            return fullText;
-                        });
-                    }
-                    
-                    // 直接退出两层循环：标记 aborted 以便跳出外层 while
-                    currentStreamController.abort();
+                    streamDone = true;
                     break;
                 }
 
                 if (payload.startsWith("[错误]")) {
                     const contentEl = assistantEl?.querySelector(".message-content");
-                    if (contentEl) contentEl.textContent += payload;
-                    console.error("收到错误消息:", payload);
-                    currentStreamController.abort();
+                    if (contentEl) contentEl.innerHTML += "<span style='color:red;'>" + payload + "</span>";
+                    streamDone = true;
                     break;
                 }
 
                 // 兜底：疑似 token JSON 不进入正文
                 if (/\b(input_tokens|output_tokens|total_tokens)\b\s*:/.test(payload)) {
                     try { tokenInfo = JSON.parse(payload); } catch (e) {}
-                } else {
-                    // 把高频 token 先放进队列
-                    enqueueStreamText(payload);
-                    // 由 flush 机制批量合并并渲染
-                    scheduleFlushStream(assistantEl, (appendText) => {
-                        // 这里真正把 pending 合并到 fullText
-                        fullText += appendText;
-                        // 同时把 rawContent 持续写入（方便切换/重渲染）
-                        assistantEl.dataset.rawContent = fullText;
-                        return fullText;
-                    });
+                    continue;
+                }
+                
+                // 尝试解析 JSON 文本块（后端用 JSON 发送以保留换行）
+                let parsedPayload = payload;
+                try {
+                    const obj = JSON.parse(payload);
+                    if (typeof obj === "string") {
+                        parsedPayload = obj;
+                    } else if (obj && typeof obj.text === "string") {
+                        parsedPayload = obj.text;
+                    }
+                } catch (_) {
+                    // 非 JSON 保持原样
+                }
+                
+                if (parsedPayload) {
+                    // 流式处理：累积内容并实时渲染
+                    fullText += parsedPayload;
+                    assistantEl.dataset.rawContent = fullText;
+                    
+                    const contentEl = assistantEl.querySelector(".message-content");
+                    if (contentEl) {
+                        renderMarkdown(contentEl, fullText, false);
+                        scrollToBottom();
+                    }
                 }
 
             }
         }
 
-        
-        console.log("重新生成：流式输出完成，总文本长度:", currentFullText.length);
-        
-        // 流式输出完成后，添加底部按钮和token信息
-        if (assistantEl && !currentStreamController.signal.aborted) {
-            // 存储原始markdown内容，供复制按钮使用
-            assistantEl.dataset.rawContent = currentFullText;
-            
-            // 流式输出完成后，进行最终的markdown渲染
+        // 流式输出完成后，进行最终渲染
+        if (assistantEl) {
+            assistantEl.dataset.rawContent = fullText;
             const contentEl = assistantEl.querySelector(".message-content");
-            if (contentEl && currentFullText) {
-                // 使用统一的渲染函数进行最终渲染
-                renderMarkdownToEl(contentEl, currentFullText);
+            
+            if (window.MarkdownEngine && window.MarkdownEngine.cancelRender) {
+                window.MarkdownEngine.cancelRender(contentEl);
             }
             
-            // 为代码块添加复制按钮（只在输出完成后添加一次）
-            if (contentEl) {
-                addCopyButtonsToCodeBlocks(contentEl);
+            if (contentEl && fullText) {
+                renderMarkdown(contentEl, fullText, true);
             }
             
-            // 使用从SSE获取的token信息，如果没有则使用默认值
             const finalTokenInfo = tokenInfo || {
                 model: modelSelectEl ? modelSelectEl.value || "default" : "default",
                 input_tokens: 0,
@@ -1233,17 +1046,16 @@ async function regenerateLastMessage() {
                 total_tokens: 0
             };
             
-            // 添加底部信息
             addMessageFooter(assistantEl, fullText, finalTokenInfo, false);
             scrollToBottom();
         }
+
     } catch (e) {
         if (e.name !== 'AbortError') {
             const contentEl = assistantEl ? assistantEl.querySelector(".message-content") : null;
             if (contentEl) {
-                contentEl.textContent += "\n[请求异常] " + e.message;
+                contentEl.innerHTML += "<br><span style='color:red;'>[请求异常] " + e.message + "</span>";
             }
-            // 即使出错也添加footer
             if (assistantEl) {
                 addMessageFooter(assistantEl, fullText, null, false);
             }
@@ -1255,67 +1067,8 @@ async function regenerateLastMessage() {
         updateSendButton();
     }
 }
-// 工具函数
-function addCopyButtonsToCodeBlocks(messageEl) {
-    const codeBlocks = messageEl.querySelectorAll("pre code");
-    codeBlocks.forEach(codeBlock => {
-        const pre = codeBlock.parentElement;
-        
-        // 检查是否已经添加过复制按钮，避免重复添加
-        if (pre.querySelector(".code-header")) {
-            return;
-        }
-        
-        // 创建代码头部
-        const header = document.createElement("div");
-        header.className = "code-header";
-        
-        // 创建复制按钮
-        const copyBtn = document.createElement("button");
-        copyBtn.className = "copy-code-btn";
-        copyBtn.innerHTML = "📋"; // 使用剪贴板图标
-        copyBtn.onclick = () => {
-            const code = codeBlock.textContent;
-            navigator.clipboard.writeText(code).then(() => {
-                copyBtn.innerHTML = "✓";
-                copyBtn.classList.add("copied");
-                setTimeout(() => {
-                    copyBtn.innerHTML = "📋";
-                    copyBtn.classList.remove("copied");
-                }, 2000);
-            }).catch(err => {
-                console.error("复制失败:", err);
-                copyBtn.innerHTML = "✗";
-                setTimeout(() => {
-                    copyBtn.innerHTML = "📋";
-                }, 2000);
-            });
-        };
-        
-        header.appendChild(copyBtn);
-        pre.insertBefore(header, codeBlock);
-    });
-}
 
-// 复制到剪贴板的通用函数
-function copyToClipboard(text, buttonEl, type) {
-    navigator.clipboard.writeText(text).then(() => {
-        const originalText = buttonEl.textContent;
-        buttonEl.textContent = "✓ 已复制";
-        buttonEl.classList.add("success");
-        setTimeout(() => {
-            buttonEl.textContent = originalText;
-            buttonEl.classList.remove("success");
-        }, 2000);
-    }).catch(err => {
-        console.error("复制失败:", err);
-        const originalText = buttonEl.textContent;
-        buttonEl.textContent = "✗ 复制失败";
-        setTimeout(() => {
-            buttonEl.textContent = originalText;
-        }, 2000);
-    });
-}
+// 工具函数 - 现在使用 MarkdownEngine 模块中的函数
 
 // 修改并重新发送消息
 function editAndResendMessage(originalText) {
@@ -1348,24 +1101,17 @@ function stopStreaming() {
         currentStreamController = null;
     }
     isStreaming = false;
-    currentStreamingMessageEl = null; // 清除流式消息元素引用
-    resetStreamUiState(); // 重置流式UI状态，避免残留token污染下一次
+    currentStreamingMessageEl = null;
     updateSendButton();
 }
 
 // 更新发送按钮状态
 function updateSendButton() {
     const sendBtn = document.getElementById("send-btn");
-    if (sendBtn) {
-        if (isStreaming) {
-            sendBtn.textContent = "停止";
-            sendBtn.onclick = stopStreaming;
-        } else {
-            sendBtn.textContent = "发送";
-            sendBtn.onclick = sendMessage;
-        }
-    }
+    if (!sendBtn) return;
+    sendBtn.textContent = isStreaming ? "停止" : "发送";
 }
+
 // 发送消息函数
 async function sendMessage() {
     if (isStreaming) {
@@ -1384,18 +1130,19 @@ async function sendMessage() {
     if (!text) return;
     
     userInputEl.value = "";
-    resetInputHeight(); // 重置输入框高度
-    resetStreamUiState(); // 重置流式UI状态
+    resetInputHeight();
     appendMessage("user", text);
+    maybeAutoTitleConversation(text);
     
     const formData = new FormData();
+
     formData.append("user_text", text);
     formData.append("model", modelSelectEl ? modelSelectEl.value || "" : "");
     formData.append("enable_knowledge_base", toggleKnowledgeEl && toggleKnowledgeEl.checked ? "true" : "false");
     formData.append("enable_mcp", toggleMcpEl && toggleMcpEl.checked ? "true" : "false");
     formData.append("enable_web_search", toggleWebEl && toggleWebEl.checked ? "true" : "false");
     if (toggleWebEl && toggleWebEl.checked && webSearchSourceEl) {
-        formData.append("web_search_source", webSearchSourceEl.value || "bing");
+        formData.append("web_search_source", webSearchSourceEl.value || "duckduckgo");
     }
     const providerId = providerSelectEl && providerSelectEl.value ? parseInt(providerSelectEl.value) : null;
     if (providerId !== null && !isNaN(providerId)) {
@@ -1404,7 +1151,7 @@ async function sendMessage() {
     const useStream = toggleStreamEl ? toggleStreamEl.checked : true;
     formData.append("stream", useStream ? "true" : "false");
     
-    // 检查是否是第一次对话（用于自动命名）- 功能暂时禁用，等待后续实现
+    // 检查是否是第一次对话（用于自动命名） 功能暂时禁用，等待后续实现
     // const conversation = conversations.find(c => c.id === currentConversationId);
     // const isFirstMessage = conversation && (conversation.title === "新对话" || conversation.title === "无标题对话");
     
@@ -1420,24 +1167,20 @@ async function sendMessage() {
                 throw new Error(err || res.statusText);
             }
             const data = await res.json();
-            console.log("收到的完整响应数据:", JSON.stringify(data, null, 2));
-            console.log("Token信息:", data.token_info);
             
             appendMessage("assistant", data.assistant_message.content, data.token_info);
+            maybeAutoTitleConversation();
         } catch (e) {
             appendMessage("assistant", "[错误] " + e.message);
         }
         return;
+
     }
     
     // 流式传输
     isStreaming = true;
     updateSendButton();
     currentStreamController = new AbortController();
-    
-    resetStreamUiState(); // 重置流式UI状态
-    
-    console.log("开始流式传输，对话ID:", currentConversationId);
     
     // 创建AI消息元素，不显示底部（等输出完成后再添加）
     const assistantEl = appendMessage("assistant", "", null, false);
@@ -1457,167 +1200,153 @@ async function sendMessage() {
             }
         });
         
-        console.log("收到响应，状态:", res.status);
-        
         if (!res.ok) {
             const err = await res.text();
-            console.error("请求失败:", err);
             throw new Error(err || res.statusText);
         }
         if (!res.body) throw new Error("ReadableStream not supported");
         const reader = res.body.getReader();
         const decoder = new TextDecoder("utf-8");
         
-        console.log("开始读取流式数据...");
+        // 更稳定 SSE 解析：按 \n\n 分隔事件，保留 data 多行换行
+        let sseBuffer = "";
+        let streamDone = false;
         
-        // 按 event/data + 空行结束 的方式正确解析 SSE
-        let eventName = "message";
-        let dataBuf = "";
-        
-        while (!currentStreamController.signal.aborted) {
+        while (!currentStreamController.signal.aborted && !streamDone) {
             const { done, value } = await reader.read();
-            if (done) {
-                console.log("流式数据读取完成");
-                break;
-            }
+            if (done) break;
             
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split("\n");
+            sseBuffer += decoder.decode(value, { stream: true });
             
-            for (const line of lines) {
-                if (line.startsWith("event:")) {
-                    eventName = line.slice(6).trim(); // e.g. "message" | "meta" | "ack"
-                    console.log("收到事件:", eventName);
+            // 统一换行符（防止 \r\n 干扰分割）
+            sseBuffer = sseBuffer.replace(/\r\n/g, "\n");
+            
+            // SSE 事件用空行分隔
+            let sepIndex;
+            while ((sepIndex = sseBuffer.indexOf("\n\n")) !== -1) {
+                const rawEvent = sseBuffer.slice(0, sepIndex);
+                sseBuffer = sseBuffer.slice(sepIndex + 2);
+                
+                if (!rawEvent.trim()) continue;
+                
+                let eventName = "message";
+                const dataLines = [];
+                
+                for (const line of rawEvent.split("\n")) {
+                    if (line.startsWith("event:")) {
+                        eventName = line.slice(6).trim() || "message";
+                    } else if (line.startsWith("data:")) {
+                        // SSE 标准格式: "data: content" 或 "data:content"
+                        let data = line.slice(5);
+                        if (data.startsWith(' ')) {
+                            data = data.slice(1);
+                        }
+                        dataLines.push(data);
+                    }
+                }
+                
+                // 重要：多行 data 用 \n 连接（SSE 规范）
+                const payload = dataLines.join("\n");
+                
+                if (!payload) continue;
+                
+                if (eventName === "meta") {
+                    try { 
+                        tokenInfo = JSON.parse(payload);
+                    } catch (e) {}
                     continue;
                 }
-                if (line.startsWith("data:")) {
-                    dataBuf += line.slice(5).trimStart(); // accumulate
+                
+                if (eventName === "ack") {
                     continue;
                 }
-                // SSE events end with a blank line
-                if (line.trim() === "") {
-                    if (!dataBuf) { 
-                        eventName = "message"; 
-                        continue; 
+                
+                // message 正文
+                // 忽略 user_message_id / message_id 等元数据
+                if (payload.includes("user_message_id") || payload.includes("message_id")) {
+                    continue;
+                }
+
+                // 尝试解析 JSON 文本块（后端用 JSON text 发送以保留换行）
+                let parsedPayload = payload;
+                try {
+                    const obj = JSON.parse(payload);
+                    if (typeof obj === "string") {
+                        parsedPayload = obj;
+                    } else if (obj && typeof obj.text === "string") {
+                        parsedPayload = obj.text;
                     }
-                    
-                    const payload = dataBuf;
-                    dataBuf = "";
-                    
-                    if (DEBUG_STREAM) {
-                        console.log(`处理事件 ${eventName}:`, payload.length > 80 ? payload.substring(0, 80) + "…" : payload);
+                } catch (_) {
+                    // 非 JSON 保持原样
+                }
+
+                if (parsedPayload === "[DONE]") {
+                    streamDone = true;
+                    break;
+                }
+
+                if (parsedPayload && typeof parsedPayload === "string" && parsedPayload.startsWith("[错误]")) {
+                    const contentEl = assistantEl?.querySelector(".message-content");
+                    if (contentEl) {
+                        contentEl.innerHTML += `<br><span style="color:red;">${parsedPayload}</span>`;
                     }
+                    streamDone = true;
+                    break;
+                }
+                
+                // 兜底：疑似 token JSON 不进入正文
+                if (/\"(input_tokens|output_tokens|total_tokens)\"\s*:/.test(parsedPayload)) {
+                    try { 
+                        tokenInfo = JSON.parse(parsedPayload); 
+                    } catch (e) {}
+                    continue;
+                }
+                
+                if (parsedPayload) {
+                    // 流式处理：累积内容并实时渲染
+                    fullText += parsedPayload;
+                    assistantEl.dataset.rawContent = fullText;
                     
-                    if (eventName === "meta") {
-                        // token 信息只存起来，不进正文
-                        try { 
-                            tokenInfo = JSON.parse(payload);
-                            console.log("解析到token信息:", tokenInfo);
-                        } catch (e) {
-                            console.warn("解析meta信息失败:", e);
-                        }
-                    } else if (eventName === "ack") {
-                        // ack 事件：用户消息已落库确认（自动命名功能暂时禁用）
-                        console.log("收到ack确认");
-                    } else {
-                        // message 正文
-                        if (payload === "[DONE]") {
-                            console.log("收到完成标记");
-                            
-                            // DONE：把最后残留的 pending 强制刷到 DOM
-                            if (streamUiState.pending) {
-                                scheduleFlushStream(assistantEl, (appendText) => {
-                                    fullText += appendText;
-                                    assistantEl.dataset.rawContent = fullText;
-                                    return fullText;
-                                });
-                                // 立即再触发一次（防止 flushTimer 还没到）
-                                // 直接调用一次"到期"flush：通过把 lastFlushAt 往前挪来强制 dueByTime
-                                streamUiState.lastFlushAt = 0;
-                                scheduleFlushStream(assistantEl, (appendText) => {
-                                    fullText += appendText;
-                                    assistantEl.dataset.rawContent = fullText;
-                                    return fullText;
-                                });
-                            }
-                            
-                            break;
-                        }
-                        if (payload.startsWith("[错误]")) {
-                            const contentEl = assistantEl?.querySelector(".message-content");
-                            if (contentEl) contentEl.textContent += payload;
-                            console.error("收到错误消息:", payload);
-                            break;
-                        }
-                        
-                        // 兜底：疑似 token JSON 不进入正文（防止后端异常/分包错乱）
-                        if (/\"(input_tokens|output_tokens|total_tokens)\"\s*:/.test(payload)) {
-                            try { 
-                                tokenInfo = JSON.parse(payload); 
-                            } catch (e) {}
-                        } else {
-                            // 调试：检查payload中的换行符（只打印前3次）
-                            if (!window.__dbgPrinted) window.__dbgPrinted = 0;
-                            if (window.__dbgPrinted < 3) {
-                                window.__dbgPrinted++;
-                                console.log("DBG payload raw:", JSON.stringify(payload));
-                            }
-                            
-                            // 把高频 token 先放进队列
-                            enqueueStreamText(payload);
-                            // 由 flush 机制批量合并并渲染
-                            scheduleFlushStream(assistantEl, (appendText) => {
-                                // 这里真正把 pending 合并到 fullText
-                                fullText += appendText;
-                                // 同时把 rawContent 持续写入（方便切换/重渲染）
-                                assistantEl.dataset.rawContent = fullText;
-                                return fullText;
-                            });
-                        }
+                    const contentEl = assistantEl.querySelector(".message-content");
+                    if (contentEl) {
+                        renderMarkdown(contentEl, fullText, false);
+                        scrollToBottom();
                     }
-                    eventName = "message";
                 }
             }
         }
         
-        console.log("流式输出完成，总文本长度:", fullText.length);
-        
-        // 流式输出完成后，添加底部按钮和token信息
-        if (assistantEl && !currentStreamController.signal.aborted) {
-            // 存储原始markdown内容，供复制按钮使用
+        // 流式输出完成后，进行最终渲染
+        if (assistantEl) {
             assistantEl.dataset.rawContent = fullText;
-            
-            // 流式输出完成后，进行最终的markdown渲染
             const contentEl = assistantEl.querySelector(".message-content");
+            
+            // 取消待处理的渲染，执行最终渲染
+            if (window.MarkdownEngine && window.MarkdownEngine.cancelRender) {
+                window.MarkdownEngine.cancelRender(contentEl);
+            }
+            
             if (contentEl && fullText) {
-                // 使用统一的渲染函数进行最终渲染
-                renderMarkdownToEl(contentEl, fullText);
+                renderMarkdown(contentEl, fullText, true);
             }
             
-            // 为代码块添加复制按钮（只在输出完成后添加一次）
-            if (contentEl) {
-                addCopyButtonsToCodeBlocks(contentEl);
-            }
-            
-            // 使用从SSE获取的token信息，如果没有则使用默认值
+            // 添加底部信息
             const finalTokenInfo = tokenInfo || {
                 model: modelSelectEl ? modelSelectEl.value || "default" : "default",
                 input_tokens: 0,
                 output_tokens: 0,
                 total_tokens: 0
             };
-            
-            // 添加底部信息
             addMessageFooter(assistantEl, fullText, finalTokenInfo, false);
             scrollToBottom();
         }
+
     } catch (e) {
         if (e.name !== 'AbortError') {
             const contentEl = assistantEl ? assistantEl.querySelector(".message-content") : null;
             if (contentEl) {
-                contentEl.textContent += "\n[请求异常] " + e.message;
+                contentEl.innerHTML += "<br><span style='color:red;'>[请求异常] " + e.message + "</span>";
             }
-            // 即使出错也添加footer
             if (assistantEl) {
                 addMessageFooter(assistantEl, fullText, null, false);
             }
@@ -1626,35 +1355,32 @@ async function sendMessage() {
         isStreaming = false;
         currentStreamController = null;
         currentStreamingMessageEl = null;
-        renderingScheduled = false; // 重置渲染调度标志
         updateSendButton();
     }
 }
+
 // 对话管理函数
-let isSelectingConversation = false; // 防止重复点击
+let isSelectingConversation = false;
 
 async function selectConversation(id) {
     if (isSelectingConversation) {
-        console.log("正在切换对话，请稍候...");
         return;
     }
 
     isSelectingConversation = true;
 
     try {
-        // 1) 切换前：停止流式 + 取消旧消息渲染计划（防止新对话渲染被旧timer回写）
+        // 切换前：停止流式
         if (isStreaming) {
-            console.log("检测到正在进行流式输出，先停止当前输出...");
             stopStreaming();
             await new Promise(resolve => setTimeout(resolve, 80));
         }
 
         if (currentStreamingMessageEl) {
             const oldContentEl = currentStreamingMessageEl.querySelector(".message-content");
-            if (oldContentEl) cancelScheduledRender(oldContentEl);
         }
 
-        // 重置运行态引用（避免后续误用旧 DOM）
+        // 重置运行态引用
         isStreaming = false;
         currentStreamController = null;
         currentStreamingMessageEl = null;
@@ -1697,9 +1423,11 @@ async function loadMessages(conversationId) {
             console.error("加载消息失败:", res.status);
             return;
         }
-        const msgs = await res.json();
+        const raw = await res.json();
+        const msgs = normalizeApiResponse(raw) || [];
         if (chatMessagesEl) chatMessagesEl.innerHTML = "";
         msgs.forEach(msg => {
+
             // 使用数据库中保存的token信息
             let tokenInfo = null;
             
@@ -1735,11 +1463,72 @@ async function loadMessages(conversationId) {
     }
 }
 
-// 自动命名对话功能 - 暂时禁用，等待后续实现
-// async function autoTitleConversation(id) { ... }
+function getFirstUserMessageText() {
+    try {
+        const msgEls = document.querySelectorAll('#chat-messages .message');
+        for (const el of msgEls) {
+            if (el.classList.contains('message-user')) {
+                const txt = (el.textContent || '').trim();
+                if (txt) return txt;
+            }
+        }
+    } catch (e) {
+        console.warn('读取首条用户消息失败:', e);
+    }
+    return "";
+}
+
+async function maybeAutoTitleConversation(firstUserMessage = null) {
+    if (!currentConversationId) return;
+    const conv = conversations.find(c => c.id === currentConversationId);
+    if (!conv) return;
+    const currentTitle = (conv.title || "").trim();
+    if (currentTitle && currentTitle !== "新对话" && currentTitle !== "无标题对话") {
+        autoTitleRequested.add(conv.id);
+        return;
+    }
+    if (autoTitling || autoTitleRequested.has(conv.id)) return;
+
+    autoTitling = true;
+    autoTitleRequested.add(conv.id);
+    try {
+        const formData = new FormData();
+        if (modelSelectEl && modelSelectEl.value) {
+            formData.append("model", modelSelectEl.value);
+        }
+        const first = firstUserMessage || getFirstUserMessageText();
+        if (first) formData.append('first_user_message', first);
+
+        const res = await fetch(`${apiBase}/conversations/${currentConversationId}/auto-title`, {
+            method: "POST",
+            body: formData
+        });
+        if (!res.ok) {
+            const text = await res.text();
+            throw new Error(text || "自动命名失败");
+        }
+        const raw = await res.json();
+        const data = normalizeApiResponse(raw);
+        const newTitle = data?.title || data?.conversation?.title || raw?.title || raw?.conversation?.title;
+        if (newTitle) {
+            if (chatTitleEl) chatTitleEl.textContent = newTitle;
+            const idx = conversations.findIndex(c => c.id === currentConversationId);
+            if (idx >= 0) {
+                conversations[idx] = { ...conversations[idx], title: newTitle };
+            }
+            renderConversationList();
+        }
+    } catch (err) {
+        console.warn("自动命名失败", err);
+        autoTitleRequested.delete(currentConversationId);
+    } finally {
+        autoTitling = false;
+    }
+}
 
 // 事件监听器设置
 function setupEventListeners() {
+
     // Modal关闭按钮
     document.querySelectorAll(".modal-close").forEach(btn => {
         btn.addEventListener("click", () => {
@@ -1760,18 +1549,22 @@ function setupEventListeners() {
     if (newConvBtn) {
         newConvBtn.addEventListener("click", async () => {
             try {
-                console.log("新对话按钮被点击");
                 const formData = new FormData();
                 formData.append("title", "新对话");
                 const res = await fetch(`${apiBase}/conversations`, {method: "POST", body: formData});
                 if (!res.ok) throw new Error("创建失败");
-                const conv = await res.json();
+                const raw = await res.json();
+                const convData = normalizeApiResponse(raw);
+                const conv = (convData && convData.conversation) ? convData.conversation : raw.conversation || raw;
                 await loadConversations();
-                selectConversation(conv.id);
+                if (conv && conv.id) {
+                    selectConversation(conv.id);
+                }
             } catch(e) {
                 console.error("创建对话失败:", e);
                 alert("创建对话失败: " + e.message);
             }
+
         });
     }
 
@@ -1780,7 +1573,6 @@ function setupEventListeners() {
     if (settingsBtn) {
         settingsBtn.addEventListener("click", async () => {
             try {
-                console.log("设置按钮被点击");
                 await loadSettings();
                 openModal("settings-modal");
             } catch(e) {
@@ -1794,7 +1586,6 @@ function setupEventListeners() {
     const sendBtn = document.getElementById("send-btn");
     if (sendBtn) {
         sendBtn.addEventListener("click", () => {
-            console.log("发送按钮被点击");
             sendMessage();
         });
     }
@@ -1817,6 +1608,7 @@ function setupEventListeners() {
         manageProvidersBtn.addEventListener("click", async () => {
             closeModal("settings-modal");
             await loadProviders();
+            renderProviderList();
             openModal("provider-modal");
         });
     }
@@ -1826,7 +1618,21 @@ function setupEventListeners() {
         manageKnowledgeBtn.addEventListener("click", async () => {
             closeModal("settings-modal");
             await loadKnowledgeBases();
+            await loadEmbeddingModels();
+            await loadKnowledgeGraphStats();  // 加载知识图谱统计
             openModal("knowledge-modal");
+        });
+    }
+    
+    // 本地 RAG MCP 链接点击事件
+    const setupLocalRagLink = document.getElementById("setup-local-rag-link");
+    if (setupLocalRagLink) {
+        setupLocalRagLink.addEventListener("click", (e) => {
+            e.preventDefault();
+            const localRagInfo = document.getElementById("local-rag-info");
+            if (localRagInfo) {
+                localRagInfo.style.display = localRagInfo.style.display === "none" ? "block" : "none";
+            }
         });
     }
 
@@ -1839,20 +1645,51 @@ function setupEventListeners() {
         });
     }
 
-    // 重新渲染消息按钮
-    const rerenderMessagesBtn = document.getElementById("rerender-messages-btn");
-    if (rerenderMessagesBtn) {
-        rerenderMessagesBtn.addEventListener("click", () => {
-            console.log("重新渲染所有消息");
-            rerenderAllMessages();
-            // 显示成功提示
-            const originalText = rerenderMessagesBtn.textContent;
-            rerenderMessagesBtn.textContent = "✅ 已重新渲染";
-            rerenderMessagesBtn.disabled = true;
-            setTimeout(() => {
-                rerenderMessagesBtn.textContent = originalText;
-                rerenderMessagesBtn.disabled = false;
-            }, 2000);
+    // 导出日志按钮
+    const exportLogsBtn = document.getElementById("export-logs-btn");
+    if (exportLogsBtn) {
+        exportLogsBtn.addEventListener("click", async () => {
+            const hoursSelect = document.getElementById("export-logs-hours");
+            const hours = hoursSelect ? hoursSelect.value : 24;
+            
+            exportLogsBtn.disabled = true;
+            exportLogsBtn.textContent = "导出中...";
+            
+            try {
+                const response = await fetch(`${apiBase}/logs/export?hours=${hours}`);
+                if (!response.ok) {
+                    throw new Error("导出失败");
+                }
+                
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                
+                // 从响应头获取文件名
+                const disposition = response.headers.get("Content-Disposition");
+                let filename = "debug_logs.zip";
+                if (disposition) {
+                    const match = disposition.match(/filename=(.+)/);
+                    if (match) filename = match[1];
+                }
+                
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+                
+                exportLogsBtn.textContent = "✓ 已导出";
+                setTimeout(() => {
+                    exportLogsBtn.textContent = "导出日志";
+                    exportLogsBtn.disabled = false;
+                }, 2000);
+            } catch (e) {
+                alert("导出日志失败: " + e.message);
+                exportLogsBtn.textContent = "导出日志";
+                exportLogsBtn.disabled = false;
+            }
         });
     }
 
@@ -1870,8 +1707,8 @@ function setupEventListeners() {
             e.preventDefault();
             const id = document.getElementById("provider-id").value;
             const name = document.getElementById("provider-name").value;
-            const apiBase = document.getElementById("provider-api-base").value;
-            const apiKey = document.getElementById("provider-api-key").value;
+            const providerApiBase = document.getElementById("provider-api-base").value;
+            const providerApiKey = document.getElementById("provider-api-key").value;
             const defaultModel = document.getElementById("provider-default-model").value;
             const isDefault = document.getElementById("provider-is-default").checked;
             
@@ -1879,8 +1716,8 @@ function setupEventListeners() {
             
             const formData = new FormData();
             formData.append("name", name);
-            formData.append("api_base", apiBase);
-            if (apiKey) formData.append("api_key", apiKey);
+            formData.append("api_base", providerApiBase);
+            if (providerApiKey) formData.append("api_key", providerApiKey);
             formData.append("default_model", defaultModel);
             formData.append("is_default", isDefault ? "true" : "false");
             formData.append("models", JSON.stringify(modelsData));
@@ -2017,69 +1854,43 @@ async function saveSettingItem(key, value) {
 // 初始化函数
 async function init() {
     try {
-        console.log("0. 初始化DOM元素...");
+        // 等待一小段时间确保 markdown.js 已加载
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        // 检查 MarkdownEngine 是否加载
+        if (!window.MarkdownEngine) {
+            console.error("[初始化] MarkdownEngine 未加载！");
+        }
+        
         initDOMElements();
         
-        console.log("1. 设置输入框自适应...");
         setupInputAutoResize();
         
-        console.log("2. 开始加载设置...");
         await loadSettings();
-        
-        console.log("3. 开始加载模型...");
         await loadModels();
-        
-        console.log("4. 开始加载对话...");
         await loadConversations();
-        
-        console.log("5. 开始加载Providers...");
         await loadProviders();
-        
-        console.log("6. 开始加载知识库...");
         await loadKnowledgeBases();
-        
-        console.log("7. 开始加载向量模型...");
         await loadEmbeddingModels();
-        
-        console.log("8. 开始加载视觉模型...");
         await loadVisionModels();
-        
-        console.log("9. 开始加载重排模型...");
         await loadRerankModels();
-        
-        console.log("10. 开始加载MCP服务器...");
         await loadMCPServers();
         
-        console.log("11. 初始化模型输入...");
         initModelInputs();
-        
-        console.log("12. 初始化MCP输入...");
         initMCPInputs();
-        
-        console.log("13. 加载工具设置...");
         loadToolSettings();
-        
-        console.log("14. 设置工具监听器...");
         setupToolSettingsListeners();
-        
-        console.log("15. 设置事件监听器...");
         setupEventListeners();
-        
-        console.log("16. 设置设置监听器...");
         setupSettingsEventListeners();
-        
-        console.log("AI助手初始化完成!");
     } catch (error) {
         console.error("初始化过程中出现错误:", error);
         // 即使出现错误，也要确保基本的事件监听器被设置
         try {
-            console.log("尝试设置基本功能...");
             if (typeof initModelInputs === 'function') initModelInputs();
             if (typeof initMCPInputs === 'function') initMCPInputs();
             if (typeof setupToolSettingsListeners === 'function') setupToolSettingsListeners();
             if (typeof setupEventListeners === 'function') setupEventListeners();
             if (typeof setupSettingsEventListeners === 'function') setupSettingsEventListeners();
-            console.log("基本功能设置完成");
         } catch (e) {
             console.error("设置基本功能失败:", e);
         }
@@ -2093,19 +1904,15 @@ async function init() {
 // 确保DOM加载完成后再执行初始化
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
-        init().then(() => {
-            console.log("前端初始化完成");
-        }).catch(error => {
-            console.error("前端初始化失败:", error);
+        init().catch(error => {
+            console.error("前端初始化失败", error);
             alert("前端初始化失败: " + error.message);
         });
     });
 } else {
     // DOM已经加载完成
-    init().then(() => {
-        console.log("前端初始化完成");
-    }).catch(error => {
-        console.error("前端初始化失败:", error);
+    init().catch(error => {
+        console.error("前端初始化失败", error);
         alert("前端初始化失败: " + error.message);
     });
 }
@@ -2287,4 +2094,650 @@ function createEnvInputGroup(key = "", value = "") {
     });
     
     return group;
+}
+
+
+// ========== 知识库管理功能 ==========
+
+// 渲染知识库列表
+function renderKnowledgeBaseList() {
+    if (!kbListEl) return;
+    
+    kbListEl.innerHTML = "";
+    
+    if (knowledgeBases.length === 0) {
+        kbListEl.innerHTML = '<div class="empty-list">暂无知识库</div>';
+        return;
+    }
+    
+    knowledgeBases.forEach(kb => {
+        const item = document.createElement("div");
+        item.className = "kb-item";
+        item.innerHTML = `
+            <div class="kb-info">
+                <div class="kb-name">${kb.name}</div>
+                <div class="kb-desc">${kb.description || '无描述'}</div>
+            </div>
+            <div class="kb-actions">
+                <button class="delete-kb-btn" data-id="${kb.id}">🗑️ 删除</button>
+            </div>
+        `;
+        kbListEl.appendChild(item);
+    });
+    
+    // 添加删除按钮事件
+    kbListEl.querySelectorAll(".delete-kb-btn").forEach(btn => {
+        btn.addEventListener("click", async () => {
+            const kbId = btn.getAttribute("data-id");
+            if (confirm("确定要删除这个知识库吗？")) {
+                try {
+                    const res = await fetch(`${apiBase}/knowledge/bases/${kbId}`, { method: "DELETE" });
+                    if (!res.ok) throw new Error("删除失败");
+                    await loadKnowledgeBases();
+                    renderKnowledgeBaseList();
+                    updateKnowledgeBaseSelect();
+                } catch (e) {
+                    alert("删除知识库失败: " + e.message);
+                }
+            }
+        });
+    });
+}
+
+// 更新知识库选择器
+function updateKnowledgeBaseSelect() {
+    if (!kbSelectEl) return;
+    
+    kbSelectEl.innerHTML = '<option value="">选择知识库</option>';
+    knowledgeBases.forEach(kb => {
+        const opt = document.createElement("option");
+        opt.value = kb.id;
+        opt.textContent = kb.name;
+        kbSelectEl.appendChild(opt);
+    });
+}
+
+// 初始化知识库表单事件
+function initKnowledgeBaseForms() {
+    // 创建知识库表单
+    if (kbFormEl) {
+        kbFormEl.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            
+            const name = document.getElementById("kb-name").value.trim();
+            const description = document.getElementById("kb-description").value.trim();
+            
+            if (!name) {
+                alert("请输入知识库名称");
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append("name", name);
+            if (description) formData.append("description", description);
+            
+            try {
+                const res = await fetch(`${apiBase}/knowledge/bases`, {
+                    method: "POST",
+                    body: formData
+                });
+                if (!res.ok) throw new Error(await res.text());
+                
+                await loadKnowledgeBases();
+                renderKnowledgeBaseList();
+                updateKnowledgeBaseSelect();
+                kbFormEl.reset();
+                alert("知识库创建成功");
+            } catch (e) {
+                alert("创建知识库失败: " + e.message);
+            }
+        });
+    }
+    
+    // 上传文档表单
+    if (kbUploadFormEl) {
+        kbUploadFormEl.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            
+            const kbId = kbSelectEl ? kbSelectEl.value : "";
+            const embeddingModel = embeddingModelSelectEl ? embeddingModelSelectEl.value : "";
+            const fileInput = document.getElementById("kb-file");
+            const extractGraph = document.getElementById("kb-extract-graph")?.checked ?? true;
+            
+            if (!kbId) {
+                alert("请选择目标知识库");
+                return;
+            }
+            
+            if (!fileInput || !fileInput.files[0]) {
+                alert("请选择要上传的文件");
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append("kb_id", kbId);
+            formData.append("file", fileInput.files[0]);
+            formData.append("extract_graph", extractGraph ? "true" : "false");
+            if (embeddingModel) formData.append("embedding_model", embeddingModel);
+            
+            if (kbUploadStatusEl) {
+                kbUploadStatusEl.textContent = "上传中...";
+                kbUploadStatusEl.style.display = "block";
+            }
+            
+            try {
+                const res = await fetch(`${apiBase}/knowledge/upload`, {
+                    method: "POST",
+                    body: formData
+                });
+                
+                if (!res.ok) throw new Error(await res.text());
+                
+                const result = await res.json();
+                
+                // 显示上传结果
+                let statusMsg = "✅ 上传成功";
+                if (result.chunks_count > 0) {
+                    statusMsg += `，已创建 ${result.chunks_count} 个向量块`;
+                }
+                if (result.graph) {
+                    if (result.graph.entities_created > 0 || result.graph.relations_created > 0) {
+                        statusMsg += `，提取了 ${result.graph.entities_created} 个实体和 ${result.graph.relations_created} 个关系`;
+                    }
+                }
+                
+                if (kbUploadStatusEl) {
+                    kbUploadStatusEl.textContent = statusMsg;
+                }
+                kbUploadFormEl.reset();
+                
+                // 刷新知识图谱统计
+                loadKnowledgeGraphStats(kbId);
+                
+                setTimeout(() => {
+                    if (kbUploadStatusEl) kbUploadStatusEl.style.display = "none";
+                }, 5000);
+            } catch (e) {
+                if (kbUploadStatusEl) {
+                    kbUploadStatusEl.textContent = "❌ 上传失败: " + e.message;
+                }
+            }
+        });
+    }
+}
+
+// 加载知识图谱统计
+async function loadKnowledgeGraphStats(kbId) {
+    try {
+        const url = kbId ? `${apiBase}/knowledge/graph/stats?kb_id=${kbId}` : `${apiBase}/knowledge/graph/stats`;
+        const res = await fetch(url);
+        if (!res.ok) return;
+        
+        const stats = await res.json();
+        const statsEl = document.getElementById("kb-graph-stats");
+        const contentEl = document.getElementById("kb-graph-stats-content");
+        
+        if (statsEl && contentEl) {
+            if (stats.entity_count > 0 || stats.relation_count > 0) {
+                let html = `<div>实体数量: <strong>${stats.entity_count}</strong> | 关系数量: <strong>${stats.relation_count}</strong></div>`;
+                
+                if (stats.entity_types && Object.keys(stats.entity_types).length > 0) {
+                    html += '<div style="margin-top: 6px;">实体类型: ';
+                    const types = Object.entries(stats.entity_types)
+                        .map(([type, count]) => `${type}(${count})`)
+                        .join(', ');
+                    html += types + '</div>';
+                }
+                
+                contentEl.innerHTML = html;
+                statsEl.style.display = "block";
+            } else {
+                statsEl.style.display = "none";
+            }
+        }
+    } catch (e) {
+        console.error("加载知识图谱统计失败:", e);
+    }
+
+// ========== MCP服务器管理功能 ==========
+
+// 渲染MCP服务器列表
+function renderMCPServerList() {
+    if (!mcpListEl) return;
+    
+    mcpListEl.innerHTML = "";
+    
+    if (mcpServers.length === 0) {
+        mcpListEl.innerHTML = '<div class="empty-list">暂无MCP服务器</div>';
+        return;
+    }
+    
+    mcpServers.forEach(server => {
+        const item = document.createElement("div");
+        item.className = "mcp-item";
+        const statusIcon = server.is_enabled ? "🟢" : "🔴";
+        item.innerHTML = `
+            <div class="mcp-info">
+                <div class="mcp-name">${statusIcon} ${server.name}</div>
+                <div class="mcp-desc">${server.description || server.connection_type}</div>
+            </div>
+            <div class="mcp-actions">
+                <button class="edit-mcp-btn" data-id="${server.id}">✏️ 编辑</button>
+                <button class="test-mcp-btn" data-id="${server.id}">🔗 测试</button>
+                <button class="delete-mcp-btn" data-id="${server.id}">🗑️ 删除</button>
+            </div>
+        `;
+        mcpListEl.appendChild(item);
+    });
+    
+    // 添加编辑按钮事件
+    mcpListEl.querySelectorAll(".edit-mcp-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const serverId = btn.getAttribute("data-id");
+            const server = mcpServers.find(s => s.id == serverId);
+            if (server) {
+                fillMCPForm(server);
+            }
+        });
+    });
+    
+    // 添加测试按钮事件
+    mcpListEl.querySelectorAll(".test-mcp-btn").forEach(btn => {
+        btn.addEventListener("click", async () => {
+            const serverId = btn.getAttribute("data-id");
+            btn.textContent = "测试中...";
+            btn.disabled = true;
+            
+            try {
+                const res = await fetch(`${apiBase}/mcp/servers/${serverId}/test`, { method: "POST" });
+                const result = await res.json();
+                
+                if (result.success) {
+                    btn.textContent = "✓ 连接成功";
+                } else {
+                    btn.textContent = "✗ 连接失败";
+                    alert("连接失败: " + (result.error || "未知错误"));
+                }
+            } catch (e) {
+                btn.textContent = "✗ 测试失败";
+                alert("测试失败: " + e.message);
+            }
+            
+            setTimeout(() => {
+                btn.textContent = "🔗 测试";
+                btn.disabled = false;
+            }, 2000);
+        });
+    });
+    
+    // 添加删除按钮事件
+    mcpListEl.querySelectorAll(".delete-mcp-btn").forEach(btn => {
+        btn.addEventListener("click", async () => {
+            const serverId = btn.getAttribute("data-id");
+            if (confirm("确定要删除这个MCP服务器吗？")) {
+                try {
+                    const res = await fetch(`${apiBase}/mcp/servers/${serverId}`, { method: "DELETE" });
+                    if (!res.ok) throw new Error("删除失败");
+                    await loadMCPServers();
+                    renderMCPServerList();
+                } catch (e) {
+                    alert("删除MCP服务器失败: " + e.message);
+                }
+            }
+        });
+    });
+}
+
+// 填充MCP表单
+function fillMCPForm(server) {
+    document.getElementById("mcp-id").value = server.id;
+    document.getElementById("mcp-name").value = server.name;
+    document.getElementById("mcp-description").value = server.description || "";
+    document.getElementById("mcp-connection-type").value = server.connection_type;
+    document.getElementById("mcp-is-enabled").checked = server.is_enabled;
+    
+    // 触发连接类型变化
+    const connectionTypeEl = document.getElementById("mcp-connection-type");
+    const stdioConfigEl = document.getElementById("mcp-stdio-config");
+    const httpConfigEl = document.getElementById("mcp-http-config");
+    
+    if (server.connection_type === "stdio") {
+        stdioConfigEl.style.display = "block";
+        httpConfigEl.style.display = "none";
+        document.getElementById("mcp-command").value = server.command || "";
+        
+        // 填充参数
+        const argsContainer = document.getElementById("mcp-args-container");
+        argsContainer.innerHTML = "";
+        const args = server.args || [];
+        args.forEach(arg => {
+            const group = createArgInputGroup(arg);
+            argsContainer.appendChild(group);
+        });
+        // 添加一个空的输入组
+        const emptyGroup = document.createElement("div");
+        emptyGroup.className = "args-input-group";
+        emptyGroup.innerHTML = `
+            <input type="text" class="arg-input" placeholder="输入参数，如 -y">
+            <button type="button" class="add-arg-btn">+</button>
+        `;
+        argsContainer.appendChild(emptyGroup);
+        emptyGroup.querySelector(".add-arg-btn").addEventListener("click", () => {
+            const newGroup = createArgInputGroup();
+            argsContainer.insertBefore(newGroup, emptyGroup);
+        });
+    } else if (server.connection_type === "http") {
+        stdioConfigEl.style.display = "none";
+        httpConfigEl.style.display = "block";
+        document.getElementById("mcp-url").value = server.url || "";
+    }
+    
+    // 填充环境变量
+    const envContainer = document.getElementById("mcp-env-container");
+    envContainer.innerHTML = "";
+    const env = server.env || {};
+    Object.entries(env).forEach(([key, value]) => {
+        const group = createEnvInputGroup(key, value);
+        envContainer.appendChild(group);
+    });
+    // 添加一个空的输入组
+    const emptyEnvGroup = document.createElement("div");
+    emptyEnvGroup.className = "env-input-group";
+    emptyEnvGroup.innerHTML = `
+        <input type="text" class="env-key-input" placeholder="变量名">
+        <input type="text" class="env-value-input" placeholder="变量值">
+        <button type="button" class="add-env-btn">+</button>
+    `;
+    envContainer.appendChild(emptyEnvGroup);
+    emptyEnvGroup.querySelector(".add-env-btn").addEventListener("click", () => {
+        const newGroup = createEnvInputGroup();
+        envContainer.insertBefore(newGroup, emptyEnvGroup);
+    });
+}
+
+// 初始化MCP表单事件
+function initMCPForms() {
+    if (mcpFormEl) {
+        mcpFormEl.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            
+            const id = document.getElementById("mcp-id").value;
+            const name = document.getElementById("mcp-name").value.trim();
+            const description = document.getElementById("mcp-description").value.trim();
+            const connectionType = document.getElementById("mcp-connection-type").value;
+            const isEnabled = document.getElementById("mcp-is-enabled").checked;
+            
+            if (!name) {
+                alert("请输入服务器名称");
+                return;
+            }
+            
+            if (!connectionType) {
+                alert("请选择连接类型");
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append("name", name);
+            if (description) formData.append("description", description);
+            formData.append("connection_type", connectionType);
+            formData.append("is_enabled", isEnabled ? "true" : "false");
+            
+            if (connectionType === "stdio") {
+                const command = document.getElementById("mcp-command").value.trim();
+                if (!command) {
+                    alert("请输入命令");
+                    return;
+                }
+                formData.append("command", command);
+                
+                // 收集参数
+                const args = [];
+                document.querySelectorAll("#mcp-args-container .arg-input").forEach(input => {
+                    if (input.value.trim()) {
+                        args.push(input.value.trim());
+                    }
+                });
+                formData.append("args", JSON.stringify(args));
+            } else if (connectionType === "http") {
+                const url = document.getElementById("mcp-url").value.trim();
+                if (!url) {
+                    alert("请输入服务URL");
+                    return;
+                }
+                formData.append("url", url);
+            }
+            
+            // 收集环境变量
+            const env = {};
+            document.querySelectorAll("#mcp-env-container .env-input-group").forEach(group => {
+                const keyInput = group.querySelector(".env-key-input");
+                const valueInput = group.querySelector(".env-value-input");
+                if (keyInput && valueInput && keyInput.value.trim()) {
+                    env[keyInput.value.trim()] = valueInput.value;
+                }
+            });
+            formData.append("env", JSON.stringify(env));
+            
+            try {
+                const url = id ? `${apiBase}/mcp/servers/${id}` : `${apiBase}/mcp/servers`;
+                const method = "POST";
+                const res = await fetch(url, { method, body: formData });
+                if (!res.ok) throw new Error(await res.text());
+                
+                await loadMCPServers();
+                renderMCPServerList();
+                mcpFormEl.reset();
+                document.getElementById("mcp-id").value = "";
+                document.getElementById("mcp-stdio-config").style.display = "none";
+                document.getElementById("mcp-http-config").style.display = "none";
+                alert(id ? "MCP服务器更新成功" : "MCP服务器创建成功");
+            } catch (e) {
+                alert("保存失败: " + e.message);
+            }
+        });
+    }
+    
+    // MCP表单重置按钮
+    const mcpFormResetBtn = document.getElementById("mcp-form-reset");
+    if (mcpFormResetBtn) {
+        mcpFormResetBtn.addEventListener("click", () => {
+            if (mcpFormEl) {
+                mcpFormEl.reset();
+                document.getElementById("mcp-id").value = "";
+                document.getElementById("mcp-stdio-config").style.display = "none";
+                document.getElementById("mcp-http-config").style.display = "none";
+            }
+        });
+    }
+    
+    // MCP测试连接按钮
+    const mcpTestBtn = document.getElementById("mcp-test-connection");
+    if (mcpTestBtn) {
+        mcpTestBtn.addEventListener("click", async () => {
+            const id = document.getElementById("mcp-id").value;
+            if (!id) {
+                alert("请先保存MCP服务器配置后再测试连接");
+                return;
+            }
+            
+            mcpTestBtn.textContent = "测试中...";
+            mcpTestBtn.disabled = true;
+            
+            try {
+                const res = await fetch(`${apiBase}/mcp/servers/${id}/test`, { method: "POST" });
+                const result = await res.json();
+                
+                if (result.success) {
+                    alert("✓ 连接测试成功！");
+                } else {
+                    alert("✗ 连接测试失败: " + (result.error || "未知错误"));
+                }
+            } catch (e) {
+                alert("测试失败: " + e.message);
+            }
+            
+            mcpTestBtn.textContent = "测试连接";
+            mcpTestBtn.disabled = false;
+        });
+    }
+}
+
+// ========== 联网搜索配置功能 ==========
+
+function initSearchConfigForm() {
+    const searchConfigForm = document.getElementById("search-config-form");
+    if (searchConfigForm) {
+        searchConfigForm.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            
+            const defaultSource = document.getElementById("search-default-source").value;
+            const tavilyApiKey = document.getElementById("search-tavily-api-key").value;
+            
+            try {
+                // 保存默认搜索源
+                await saveSettingItem("default_search_source", defaultSource);
+                
+                // 保存 Tavily API Key
+                if (tavilyApiKey) {
+                    await saveSettingItem("tavily_api_key", tavilyApiKey);
+                }
+                
+                alert("搜索配置保存成功");
+                closeModal("search-config-modal");
+            } catch (e) {
+                alert("保存失败: " + e.message);
+            }
+        });
+    }
+    
+    // 重置按钮
+    const searchConfigResetBtn = document.getElementById("search-config-reset");
+    if (searchConfigResetBtn) {
+        searchConfigResetBtn.addEventListener("click", () => {
+            const form = document.getElementById("search-config-form");
+            if (form) form.reset();
+        });
+    }
+}
+
+// 在初始化时调用这些函数
+// 修改 init 函数中的调用
+(function() {
+    // 等待DOM加载完成后初始化表单
+    const originalInit = window.init || (async () => {});
+    
+    // 添加额外的初始化
+    document.addEventListener("DOMContentLoaded", () => {
+        setTimeout(() => {
+            initKnowledgeBaseForms();
+            initMCPForms();
+            initSearchConfigForm();
+            
+            // 当打开知识库模态框时渲染列表
+            const knowledgeModal = document.getElementById("knowledge-modal");
+            if (knowledgeModal) {
+                const observer = new MutationObserver((mutations) => {
+                    mutations.forEach((mutation) => {
+                        if (mutation.target.classList.contains("open")) {
+                            renderKnowledgeBaseList();
+                            updateKnowledgeBaseSelect();
+                        }
+                    });
+                });
+                observer.observe(knowledgeModal, { attributes: true, attributeFilter: ["class"] });
+            }
+            
+            // 当打开MCP模态框时渲染列表
+            const mcpModal = document.getElementById("mcp-modal");
+            if (mcpModal) {
+                const observer = new MutationObserver((mutations) => {
+                    mutations.forEach((mutation) => {
+                        if (mutation.target.classList.contains("open")) {
+                            renderMCPServerList();
+                        }
+                    });
+                });
+                observer.observe(mcpModal, { attributes: true, attributeFilter: ["class"] });
+            }
+        }, 500);
+    });
+})();
+
+
+// ========== Provider管理功能 ==========
+
+// 渲染Provider列表
+function renderProviderList() {
+    if (!providerListEl) return;
+    
+    providerListEl.innerHTML = "";
+    
+    if (providers.length === 0) {
+        providerListEl.innerHTML = '<div class="empty-list">暂无Provider配置</div>';
+        return;
+    }
+    
+    providers.forEach(provider => {
+        const item = document.createElement("div");
+        item.className = "provider-item";
+        const defaultIcon = provider.is_default ? "⭐" : "";
+        item.innerHTML = `
+            <div class="provider-info">
+                <div class="provider-name">${defaultIcon}${provider.name}</div>
+                <div class="provider-desc">${provider.api_base}</div>
+                <div class="provider-models">${provider.default_model}</div>
+            </div>
+            <div class="provider-actions">
+                <button class="edit-provider-btn" data-id="${provider.id}">✏️ 编辑</button>
+                <button class="delete-provider-btn" data-id="${provider.id}">🗑️ 删除</button>
+            </div>
+        `;
+        providerListEl.appendChild(item);
+    });
+    
+    // 添加编辑按钮事件
+    providerListEl.querySelectorAll(".edit-provider-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const providerId = btn.getAttribute("data-id");
+            const provider = providers.find(p => p.id == providerId);
+            if (provider) {
+                fillProviderForm(provider);
+            }
+        });
+    });
+    
+    // 添加删除按钮事件
+    providerListEl.querySelectorAll(".delete-provider-btn").forEach(btn => {
+        btn.addEventListener("click", async () => {
+            const providerId = btn.getAttribute("data-id");
+            if (confirm("确定要删除这个Provider吗？")) {
+                try {
+                    const res = await fetch(`${apiBase}/providers/${providerId}`, { method: "DELETE" });
+                    if (!res.ok) throw new Error("删除失败");
+                    await loadProviders();
+                    renderProviderList();
+                    renderProviderSelect();
+                } catch (e) {
+                    alert("删除Provider失败: " + e.message);
+                }
+            }
+        });
+    });
+}
+
+// 填充Provider表单
+function fillProviderForm(provider) {
+    document.getElementById("provider-id").value = provider.id;
+    document.getElementById("provider-name").value = provider.name;
+    document.getElementById("provider-api-base").value = provider.api_base;
+    document.getElementById("provider-api-key").value = ""; // 不显示已保存的密钥
+    document.getElementById("provider-default-model").value = provider.default_model;
+    document.getElementById("provider-is-default").checked = provider.is_default;
+    
+    // 填充模型列表
+    if (provider.models) {
+        const modelsList = provider.models.split(",").map(m => m.trim()).filter(m => m);
+        setModelInputValues(modelsList.map(m => ({ model: m, name: "", capabilities: {} })));
+    }
 }
