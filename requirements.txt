@@ -1,0 +1,20 @@
+# 本地AI助手 - 依赖包
+
+# ===== 核心框架 =====
+fastapi==0.115.6           # Web框架
+uvicorn[standard]==0.32.1  # ASGI服务器
+
+# ===== 数据库 =====
+sqlalchemy>=2.0.0          # 数据库ORM
+
+# ===== 配置管理 =====
+python-dotenv==1.0.1       # 环境变量
+pydantic==2.10.3           # 数据验证
+pydantic-settings==2.6.1   # 设置管理
+
+# ===== HTTP客户端 =====
+httpx==0.27.0              # HTTP客户端（AI API调用）
+requests==2.32.3           # HTTP库（联网搜索）
+
+# ===== 表单处理 =====
+python-multipart==0.0.9    # 文件上传支持
