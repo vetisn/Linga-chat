@@ -32,10 +32,6 @@ class ProviderConfig:
         self.api_key = (api_key or settings.AI_API_KEY or "").strip()
         self.default_model = default_model or settings.AI_MODEL or "gpt-4o-mini"
 
-        # 允许在没有API Key的情况下启动，但在实际调用时会报错
-        if not self.api_key:
-            print("警告: AI_API_KEY 未配置，请在Web界面中配置Provider")
-
 
 class AIManager:
     def __init__(self) -> None:
@@ -43,8 +39,7 @@ class AIManager:
         try:
             self._provider = ProviderConfig()
         except Exception as e:
-            print(f"初始化AI管理器时出现警告: {e}")
-            # 创建一个空的配置，允许系统启动
+            # 静默处理，允许系统启动
             self._provider = ProviderConfig(
                 api_base="https://api.openai.com/v1",
                 api_key="",
@@ -194,17 +189,26 @@ class AIManager:
 
         def _iter() -> Generator[Dict[str, Any], None, None]:
             usage_info = None
+            line_count = 0
             try:
                 for line in resp.iter_lines():
+                    line_count += 1
                     if not line:
                         continue
+                    # 调试：打印原始行
+                    if line_count <= 5:
+                        print(f"[DEBUG] 流式行 {line_count}: {line[:200] if len(line) > 200 else line}")
+                    
                     if line.startswith("data:"):
                         line = line[5:].strip()
                     if line == "[DONE]":
+                        print(f"[DEBUG] 收到 [DONE]，共 {line_count} 行")
                         break
                     try:
-                        obj = httpx.Response(200, content=line).json()
-                    except Exception:
+                        import json as _json
+                        obj = _json.loads(line)
+                    except Exception as e:
+                        print(f"[DEBUG] JSON解析失败: {e}, 行内容: {line[:100]}")
                         continue
 
                     # usage 终结包
@@ -226,6 +230,8 @@ class AIManager:
                     content = delta.get("content") or ""
                     if content:
                         yield {"type": "content", "content": content}
+                
+                print(f"[DEBUG] 流式迭代结束，共处理 {line_count} 行")
             finally:
                 resp.close()
 
@@ -329,3 +335,85 @@ class AIManager:
             if isinstance(emb, list):
                 embeddings.append(emb)
         return embeddings
+
+    # ---------- Image Generation（图像生成） ----------
+
+    def generate_image(
+        self,
+        prompt: str,
+        model: Optional[str] = None,
+        size: str = "1024x1024",
+        n: int = 1,
+        response_format: str = "url",  # "url" 或 "b64_json"
+    ) -> Dict[str, Any]:
+        """
+        调用图像生成 API（兼容 OpenAI DALL-E 格式）。
+        
+        参数：
+        - prompt: 图像描述
+        - model: 生图模型名称
+        - size: 图像尺寸，如 "1024x1024", "1792x1024", "1024x1792"
+        - n: 生成图片数量
+        - response_format: 返回格式，"url" 或 "b64_json"
+        
+        返回：
+        {
+            "success": True/False,
+            "images": [{"url": "..."} 或 {"b64_json": "..."}],
+            "error": "错误信息（如果失败）"
+        }
+        """
+        if not model:
+            return {"success": False, "error": "未指定生图模型", "images": []}
+        
+        payload: Dict[str, Any] = {
+            "model": model,
+            "prompt": prompt,
+            "size": size,
+            "n": n,
+            "response_format": response_format,
+        }
+        
+        try:
+            logger.info(
+                "图像生成请求",
+                model=model,
+                prompt_length=len(prompt),
+                size=size,
+                n=n
+            )
+            
+            url = f"{self._provider.api_base}/images/generations"
+            with httpx.Client(timeout=120) as client:  # 生图可能需要更长时间
+                resp = client.post(url, headers=self._headers(), json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+            
+            images = data.get("data", [])
+            
+            logger.info(
+                "图像生成成功",
+                model=model,
+                images_count=len(images)
+            )
+            
+            return {
+                "success": True,
+                "images": images,
+                "model": model
+            }
+            
+        except httpx.HTTPStatusError as e:
+            error_msg = f"API 错误: {e.response.status_code}"
+            try:
+                error_data = e.response.json()
+                if "error" in error_data:
+                    error_msg = error_data["error"].get("message", error_msg)
+            except:
+                pass
+            logger.error("图像生成失败", error=error_msg)
+            return {"success": False, "error": error_msg, "images": []}
+            
+        except Exception as e:
+            logger.error("图像生成异常", error=str(e))
+            return {"success": False, "error": str(e), "images": []}

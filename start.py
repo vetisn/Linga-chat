@@ -6,41 +6,13 @@
 import os
 import sys
 import uvicorn
-from app.utils.logger import logger
-
-def check_environment():
-    """检查环境配置"""
-    # 检查.env文件
-    if not os.path.exists('.env'):
-        print("❌ 错误: 找不到.env文件")
-        print("💡 请复制 .env.example 为 .env 并配置你的API信息")
-        return False
-    
-    # 检查API密钥配置
-    try:
-        with open('.env', 'r', encoding='utf-8') as f:
-            content = f.read()
-            if 'AI_API_KEY=' in content:
-                for line in content.split('\n'):
-                    if line.startswith('AI_API_KEY=') and len(line.split('=', 1)[1].strip()) > 0:
-                        return True
-                print("⚠️  警告: AI_API_KEY 未配置")
-                print("💡 请编辑 .env 文件，配置你的API密钥")
-                return False
-    except Exception as e:
-        print(f"❌ 读取配置文件失败: {e}")
-        return False
-    
-    return True
 
 def initialize_database():
     """初始化数据库（仅在需要时）"""
-    import os
     db_path = "app.db"
     
-    # 如果数据库文件已存在，跳过初始化
     if os.path.exists(db_path):
-        return True
+        return True  # 数据库已存在，迁移在 database.py 中自动处理
     
     print("🔧 首次运行，初始化数据库...")
     from app.db.database import engine
@@ -57,11 +29,6 @@ def initialize_database():
 if __name__ == "__main__":
     print("🚀 启动本地AI助手...")
     
-    # 环境检查
-    if not check_environment():
-        sys.exit(1)
-    
-    # 数据库初始化（仅首次运行）
     if not initialize_database():
         sys.exit(1)
     

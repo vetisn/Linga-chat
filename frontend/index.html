@@ -5,29 +5,39 @@
     <title>本地 AI 助手</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
     
+    <!-- 代码高亮样式 -->
+    <link rel="stylesheet" href="lib/github.min.css">
+    
+    <!-- KaTeX 数学公式样式 -->
+    <link rel="stylesheet" href="lib/katex.min.css">
+    
     <!-- 引入外部CSS -->
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=143">
     
-    <!-- 引入Marked.js库用于Markdown解析 -->
-    <script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
+    <!-- Markdown解析 -->
+    <script src="lib/marked.min.js"></script>
     
-    <!-- 引入DOMPurify用于XSS防护 -->
-    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.5/dist/purify.min.js"></script>
+    <!-- XSS防护 -->
+    <script src="lib/purify.min.js"></script>
 
     <!-- 代码高亮 -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css">
-    <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+    <script src="lib/highlight.min.js"></script>
+    
+    <!-- KaTeX 数学公式渲染 -->
+    <script src="lib/katex.min.js"></script>
 </head>
 <body>
 
-
-<div class="app-container">
+<div class="app-container" id="app-container">
     <div class="sidebar">
         <div class="sidebar-header">
             <div class="app-title">🤖 AI 助手</div>
             <div class="sidebar-buttons">
                 <button id="new-conversation-btn">新对话</button>
             </div>
+        </div>
+        <div class="current-chat-info" id="current-chat-info">
+            <span class="current-chat-title" id="chat-title">请选择对话</span>
         </div>
         <div class="conversation-list" id="conversation-list"></div>
         <div class="sidebar-footer">
@@ -36,37 +46,73 @@
     </div>
 
     <div class="main-panel">
-        <div class="chat-header">
-            <div class="chat-title" id="chat-title">请选择一个对话</div>
-            <div class="chat-controls">
-                <label>
-                    模型
-                    <select id="model-select"></select>
-                </label>
-                <label>
-                    Provider
-                    <select id="provider-select">
-                        <option value="">(全局默认)</option>
-                    </select>
-                </label>
-            </div>
-        </div>
-        <div class="chat-messages" id="chat-messages" data-density="normal"></div>
+        <div class="chat-messages" id="chat-messages"></div>
         <div class="chat-footer">
-            <div class="chat-toggles">
-                <label><input type="checkbox" id="toggle-knowledge"> 📚 知识库</label>
-                <label><input type="checkbox" id="toggle-mcp"> 🔧 MCP</label>
-                <label>
-                    <input type="checkbox" id="toggle-web"> 🌐 联网搜索
-                    <select id="web-search-source" style="margin-left: 5px; font-size: 12px; display: none;">
-                        <option value="duckduckgo">DuckDuckGo（免费）</option>
-                        <option value="tavily">Tavily</option>
+            <div class="chat-toolbar">
+                <div class="chat-toggles">
+                    <label title="知识库"><input type="checkbox" id="toggle-knowledge"><span>📚</span></label>
+                    
+                    <!-- MCP 工具选择 -->
+                    <div class="toggle-with-popup" id="mcp-toggle-wrapper">
+                        <label title="MCP 工具"><input type="checkbox" id="toggle-mcp"><span>🔧</span></label>
+                        <div class="toggle-popup" id="mcp-popup">
+                            <div class="toggle-popup-title">选择 MCP 服务</div>
+                            <div class="toggle-popup-options" id="mcp-options"></div>
+                        </div>
+                    </div>
+                    
+                    <label title="联网搜索"><input type="checkbox" id="toggle-web"><span>🌐</span></label>
+                    <label title="流式输出"><input type="checkbox" id="toggle-stream" checked><span>⚡</span></label>
+                    
+                    <!-- 生图模式 -->
+                    <div class="toggle-with-popup" id="image-gen-toggle-wrapper">
+                        <label title="生图模式"><input type="checkbox" id="toggle-image-gen"><span>🎨</span></label>
+                        <div class="toggle-popup" id="image-gen-popup">
+                            <div class="toggle-popup-title">🎨 生图设置</div>
+                            <div class="toggle-popup-options">
+                                <div class="image-gen-option">
+                                    <label>选择生图模型</label>
+                                    <select id="image-gen-model-select">
+                                        <option value="">请先配置生图模型</option>
+                                    </select>
+                                </div>
+                                <div class="image-gen-option">
+                                    <label>图片尺寸</label>
+                                    <select id="image-gen-size-select">
+                                        <option value="1024x1024">1024 × 1024 (方形)</option>
+                                        <option value="1792x1024">1792 × 1024 (横向)</option>
+                                        <option value="1024x1792">1024 × 1792 (纵向)</option>
+                                        <option value="512x512">512 × 512 (小图)</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="image-gen-tip">
+                                💡 开启后输入描述即可生图，需先在 Provider 中配置生图模型
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="chat-selectors">
+                    <div class="model-selector-wrapper">
+                        <span class="model-caps-badge" id="model-caps-badge"></span>
+                        <div class="custom-select" id="model-select-wrapper">
+                            <div class="custom-select-trigger" id="model-select-trigger">
+                                <span class="custom-select-value">未配置</span>
+                                <span class="custom-select-arrow">▼</span>
+                            </div>
+                            <div class="custom-select-dropdown" id="model-select-dropdown"></div>
+                            <select id="model-select" style="display:none;">
+                                <option value="">未配置</option>
+                            </select>
+                        </div>
+                    </div>
+                    <select id="provider-select" title="选择Provider">
+                        <option value="">未配置</option>
                     </select>
-                </label>
-                <label><input type="checkbox" id="toggle-stream" checked> ⚡ 流式输出</label>
+                </div>
             </div>
             <div class="chat-input-container">
-                <textarea id="user-input" placeholder="输入内容，按 Enter 发送，Shift+Enter 换行"></textarea>
+                <textarea id="user-input" placeholder="输入消息，Enter 发送"></textarea>
                 <button id="send-btn">发送</button>
             </div>
         </div>
@@ -86,23 +132,13 @@
                 <div class="settings-section">
                     <h4>🎨 界面设置</h4>
                     <div class="settings-row">
-                        <label>字体大小</label>
-                        <select id="font-size-select">
-                            <option value="11px">很小</option>
-                            <option value="12px">小</option>
-                            <option value="13px" selected>较小</option>
-                            <option value="14px">中</option>
-                            <option value="15px">较大</option>
-                            <option value="16px">大</option>
-                            <option value="18px">很大</option>
-                        </select>
-                    </div>
-                    <div class="settings-row">
-                        <label>内容间距</label>
-                        <select id="density-select">
-                            <option value="compact">紧凑</option>
+                        <label>界面比例</label>
+                        <select id="layout-scale-select">
+                            <option value="xs">极小</option>
+                            <option value="sm">较小</option>
                             <option value="normal" selected>标准</option>
-                            <option value="airy">宽松</option>
+                            <option value="lg">较大</option>
+                            <option value="xl">极大</option>
                         </select>
                     </div>
                 </div>
@@ -117,9 +153,12 @@
                         </select>
                     </div>
                     <div class="settings-row">
-                        <label>视觉模型</label>
-                        <select id="vision-model-select">
-                            <option value="">选择视觉模型</option>
+                        <label>
+                            图片识别方案
+                            <span class="help-tip" data-tip="当对话模型不支持图片时，用于识别图片中的文字。支持本地 Tesseract OCR（免费离线），安装后在下拉框中选择即可。安装指南见「知识库管理」页面">?</span>
+                        </label>
+                        <select id="ocr-method-select">
+                            <option value="">不启用</option>
                         </select>
                     </div>
                 </div>
@@ -169,10 +208,10 @@
 
 <!-- Provider 管理弹窗 -->
 <div class="modal" id="provider-modal">
-    <div class="modal-content">
+    <div class="modal-content modal-wide">
         <div class="modal-header">
-            <span class="modal-title">模型提供商管理</span>
-            <button class="modal-close" data-target="provider-modal">&times;</button>
+            <span class="modal-title">🔧 模型提供商管理</span>
+            <button class="modal-close" data-target="provider-modal" data-return="settings-modal">&times;</button>
         </div>
         <div class="modal-body">
             <div class="provider-list-container">
@@ -180,49 +219,53 @@
                 <div id="provider-list"></div>
             </div>
             <div class="provider-form-container">
-                <h3>新建 / 编辑</h3>
+                <h3 id="provider-form-title">新建 Provider</h3>
                 <form id="provider-form">
                     <input type="hidden" id="provider-id">
                     <div class="form-row">
-                        <label>名称</label>
-                        <input type="text" id="provider-name" required placeholder="如: OpenAI / DMX">
+                        <label>名称 <span class="required">*</span></label>
+                        <input type="text" id="provider-name" required placeholder="如: OpenAI / 智谱AI">
                     </div>
                     <div class="form-row">
-                        <label>API Base URL</label>
+                        <label>API Base URL <span class="required">*</span></label>
                         <input type="text" id="provider-api-base" required placeholder="https://api.openai.com/v1">
                     </div>
                     <div class="form-row">
                         <label>API Key</label>
-                        <input type="password" id="provider-api-key" placeholder="不修改请留空">
+                        <input type="password" id="provider-api-key" placeholder="输入 API Key（可选）">
+                        <small id="api-key-hint" style="display:none;">留空则保持原密钥不变</small>
                     </div>
+                    
+                    <!-- 默认模型配置 -->
                     <div class="form-row">
-                        <label>默认模型</label>
-                        <input type="text" id="provider-default-model" required placeholder="gpt-4o-mini">
-                    </div>
-                    <div class="form-row">
-                        <label>模型列表</label>
-                        <div id="provider-models-container">
-                            <div class="models-input-group">
-                                <input type="text" class="model-input" placeholder="输入模型名称，如 gpt-4o">
-                                <input type="text" class="model-name-input" placeholder="自定义名称（可选）">
-                                <div class="model-capabilities">
-                                    <label><input type="checkbox" class="cap-vision"> 视觉</label>
-                                    <label><input type="checkbox" class="cap-reasoning"> 推理</label>
-                                    <label><input type="checkbox" class="cap-chat"> 对话</label>
-                                </div>
-                                <button type="button" class="add-model-btn">+</button>
+                        <label>默认模型 <span class="required">*</span></label>
+                        <div class="model-config-card default-model-card">
+                            <div class="model-inputs">
+                                <input type="text" id="provider-default-model" required placeholder="输入模型名称，如 gpt-4o">
+                                <input type="text" id="provider-default-model-name" placeholder="自定义名称（可选）">
+                            </div>
+                            <div class="model-capabilities">
+                                <label><input type="checkbox" id="default-cap-vision"> 视觉</label>
+                                <label><input type="checkbox" id="default-cap-reasoning"> 推理</label>
+                                <label><input type="checkbox" id="default-cap-chat" checked> 对话</label>
+                                <label><input type="checkbox" id="default-cap-image-gen"> 生图</label>
                             </div>
                         </div>
-                        <small style="color: #666; font-size: 12px;">点击 + 添加更多模型，可为每个模型标记功能</small>
                     </div>
+                    
+                    <!-- 模型列表 -->
                     <div class="form-row">
-                        <label style="flex-direction: row; display: flex; align-items: center; gap: 8px;">
-                            <input type="checkbox" id="provider-is-default" style="width: auto;"> 设为默认 Provider
-                        </label>
+                        <label>模型列表</label>
+                        <div id="provider-models-container" class="models-list-container">
+                            <!-- 动态添加的模型卡片 -->
+                        </div>
+                        <button type="button" id="add-model-btn" class="add-model-btn">+ 添加模型</button>
+                        <small>点击添加更多模型，可为每个模型标记功能</small>
                     </div>
+                    
                     <div class="form-actions">
-                        <button type="submit">保存</button>
-                        <button type="button" id="provider-form-reset">重置</button>
+                        <button type="submit" id="provider-submit-btn">保存</button>
+                        <button type="button" id="provider-form-reset">取消</button>
                     </div>
                 </form>
             </div>
@@ -234,85 +277,169 @@
 <div class="modal" id="knowledge-modal">
     <div class="modal-content">
         <div class="modal-header">
-            <span class="modal-title">知识库管理</span>
-            <button class="modal-close" data-target="knowledge-modal">&times;</button>
+            <span class="modal-title">📚 知识库管理</span>
+            <button class="modal-close" data-target="knowledge-modal" data-return="settings-modal">&times;</button>
         </div>
-        <div class="modal-body">
-            <div class="kb-list-container">
-                <h3>我的知识库</h3>
-                <div id="kb-list"></div>
-                
-                <h3 style="margin-top: 20px; border-top: 1px solid #ddd; padding-top: 12px;">新建知识库</h3>
-                <form id="kb-form">
-                    <div class="form-row">
-                        <label>名称</label>
-                        <input type="text" id="kb-name" placeholder="如: 公司文档">
-                    </div>
-                    <div class="form-row">
-                        <label>描述</label>
-                        <input type="text" id="kb-description" placeholder="可选描述">
-                    </div>
-                    <div class="form-actions">
-                        <button type="submit">创建</button>
-                    </div>
-                </form>
-            </div>
-            <div class="kb-upload-container">
-                <h3>上传文档</h3>
-                <form id="kb-upload-form">
-                    <div class="form-row">
-                        <label>目标知识库</label>
-                        <select id="kb-select"></select>
-                    </div>
-                    <div class="form-row">
-                        <label>向量模型</label>
-                        <select id="embedding-model-select">
-                            <option value="">不使用向量模型</option>
-                        </select>
-                        <small style="color: #666; font-size: 11px; margin-top: 4px; display: block;">
-                            💡 无 API？可使用 <a href="#" id="setup-local-rag-link" style="color: #1d4e4e;">本地 RAG MCP</a> 替代
-                        </small>
-                    </div>
-                    <div class="form-row">
-                        <label style="flex-direction: row; display: flex; align-items: center; gap: 8px;">
-                            <input type="checkbox" id="kb-extract-graph" checked style="width: auto;"> 
-                            自动提取知识图谱
-                        </label>
-                        <small style="color: #666; font-size: 11px;">从文档中提取实体和关系，增强检索效果</small>
-                    </div>
-                    <div class="form-row">
-                        <label>选择文件 (txt/md/csv)</label>
-                        <input type="file" id="kb-file" required>
-                    </div>
-                    <div class="form-actions">
-                        <button type="submit">上传并构建知识库</button>
-                    </div>
-                </form>
-                <div id="kb-upload-status" class="status-text"></div>
-                
-                <!-- 知识图谱统计 -->
-                <div id="kb-graph-stats" style="margin-top: 15px; padding: 12px; background: #f5f5f5; border-radius: 6px; display: none;">
-                    <h4 style="margin: 0 0 8px 0; color: #333; font-size: 13px;">📊 知识图谱统计</h4>
-                    <div id="kb-graph-stats-content" style="font-size: 12px; color: #555;"></div>
+        <div class="modal-body" style="flex-direction: column; gap: 20px;">
+            <!-- 上半部分：知识库列表和上传 -->
+            <div style="display: flex; gap: 30px;">
+                <div class="kb-list-container">
+                    <h3>我的知识库</h3>
+                    <div id="kb-list"></div>
+                    
+                    <h3 style="margin-top: 20px; border-top: 1px solid #ddd; padding-top: 12px;">新建知识库</h3>
+                    <form id="kb-form">
+                        <div class="form-row">
+                            <label>名称</label>
+                            <input type="text" id="kb-name" placeholder="如: 公司文档">
+                        </div>
+                        <div class="form-row">
+                            <label>描述</label>
+                            <input type="text" id="kb-description" placeholder="可选描述">
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit">创建</button>
+                        </div>
+                    </form>
                 </div>
-                
-                <!-- 本地 RAG MCP 推荐 -->
-                <div id="local-rag-info" style="display: none; margin-top: 15px; padding: 12px; background: #f0f7f0; border-radius: 6px; border: 1px solid #c8e6c9;">
-                    <h4 style="margin: 0 0 8px 0; color: #2e7d32; font-size: 13px;">🚀 本地 RAG MCP（推荐）</h4>
-                    <p style="margin: 0 0 8px 0; font-size: 12px; color: #555;">
-                        无需 API Key，完全本地运行的知识库检索方案：
-                    </p>
-                    <ul style="margin: 0 0 10px 0; padding-left: 20px; font-size: 12px; color: #555;">
-                        <li>支持 PDF、DOCX、TXT、Markdown</li>
-                        <li>本地向量模型，离线可用</li>
-                        <li>语义搜索，理解自然语言</li>
-                    </ul>
-                    <div style="background: #fff; padding: 8px; border-radius: 4px; font-family: monospace; font-size: 11px; overflow-x: auto;">
-                        <code>npx mcp-local-rag</code>
+                <div class="kb-upload-container">
+                    <h3>上传文档</h3>
+                    <form id="kb-upload-form">
+                        <div class="form-row">
+                            <label>目标知识库</label>
+                            <select id="kb-select"></select>
+                        </div>
+                        
+                        <!-- 模型配置区域 -->
+                        <div class="kb-model-config">
+                            <div class="form-row">
+                                <label>
+                                    向量模型 <span class="required-badge">必选</span>
+                                    <span class="model-help-icon" data-model-type="embedding" title="查看支持的模型">?</span>
+                                </label>
+                                <select id="embedding-model-select">
+                                    <option value="">请选择向量模型</option>
+                                </select>
+                                <small>用于将文本转换为向量，实现语义搜索</small>
+                            </div>
+                            
+                            <div class="form-row">
+                                <label>
+                                    重排模型 <span class="optional-badge">可选</span>
+                                    <span class="model-help-icon" data-model-type="rerank" title="查看支持的模型">?</span>
+                                </label>
+                                <select id="rerank-model-select">
+                                    <option value="">不使用重排模型</option>
+                                </select>
+                                <small>对检索结果重新排序，提高相关性</small>
+                            </div>
+                            
+                            <div class="form-row">
+                                <label>
+                                    图片识别方案 <span class="optional-badge">可选</span>
+                                    <span class="model-help-icon" data-model-type="vision" title="查看支持的模型">?</span>
+                                </label>
+                                <select id="kb-vision-model-select">
+                                    <option value="">不启用</option>
+                                </select>
+                                <small>识别扫描件/图片 PDF 中的文字</small>
+                            </div>
+                        </div>
+                        
+                        <!-- 模型帮助弹出框 -->
+                        <div class="model-help-popup" id="model-help-popup" style="display: none;">
+                            <div class="model-help-header">
+                                <span class="model-help-title" id="model-help-title">支持的模型</span>
+                                <button class="model-help-close">&times;</button>
+                            </div>
+                            <div class="model-help-content" id="model-help-content"></div>
+                        </div>
+                        
+                        <div class="form-row">
+                            <label style="flex-direction: row; display: flex; align-items: center; gap: 8px;">
+                                <input type="checkbox" id="kb-extract-graph" checked style="width: auto;"> 
+                                自动提取知识图谱
+                            </label>
+                            <small>从文档中提取实体和关系，增强检索效果</small>
+                        </div>
+                        
+                        <div class="form-row">
+                            <label>选择文件 - 支持多选</label>
+                            <input type="file" id="kb-file" multiple required accept=".pdf,.docx,.doc,.pptx,.xlsx,.xls,.txt,.md,.csv,.json,.xml,.html,.htm">
+                            <small>支持: PDF, Word, PPT, Excel, TXT, Markdown, CSV, JSON, XML, HTML</small>
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit">上传并构建知识库</button>
+                        </div>
+                    </form>
+                    <div id="kb-upload-status" class="status-text"></div>
+                    
+                    <!-- 知识图谱统计 -->
+                    <div id="kb-graph-stats" style="margin-top: 15px; padding: 12px; background: #f5f5f5; border-radius: 6px; display: none;">
+                        <h4 style="margin: 0 0 8px 0; color: #333; font-size: 13px;">📊 知识图谱统计</h4>
+                        <div id="kb-graph-stats-content" style="font-size: 12px; color: #555;"></div>
                     </div>
-                    <p style="margin: 8px 0 0 0; font-size: 11px; color: #666;">
-                        <a href="https://github.com/shinpr/mcp-local-rag" target="_blank" style="color: #1d4e4e;">查看文档 →</a>
-                    </p>
+                </div>
+            </div>
+            
+            <!-- 下半部分：本地方案引导 -->
+            <div class="kb-local-solutions">
+                <h3 style="margin-bottom: 15px; color: #2c3e50;">🚀 本地方案（无需 API）</h3>
+                <div class="local-solution-cards">
+                    <!-- 本地 RAG MCP -->
+                    <div class="solution-card">
+                        <div class="solution-icon">📦</div>
+                        <div class="solution-content">
+                            <h4>本地 RAG MCP</h4>
+                            <p>完全本地运行的知识库检索，无需 API Key</p>
+                            <ul>
+                                <li>支持 PDF、DOCX、TXT、Markdown</li>
+                                <li>本地向量模型，离线可用</li>
+                                <li>语义搜索，理解自然语言</li>
+                            </ul>
+                            <div class="solution-code">
+                                <code>npx mcp-local-rag</code>
+                                <button type="button" class="copy-cmd-btn" data-cmd="npx mcp-local-rag">复制</button>
+                            </div>
+                            <a href="https://github.com/shinpr/mcp-local-rag" target="_blank" class="solution-link">查看文档 →</a>
+                        </div>
+                    </div>
+                    
+                    <!-- 本地 OCR -->
+                    <div class="solution-card">
+                        <div class="solution-icon">👁️</div>
+                        <div class="solution-content">
+                            <h4>本地 OCR（Tesseract）</h4>
+                            <p>识别扫描件/图片PDF中的文字，完全离线运行</p>
+                            <ul>
+                                <li>支持中英文等多语言识别</li>
+                                <li>开源免费，无API调用限制</li>
+                                <li>安装后在上方下拉框中选择即可使用</li>
+                            </ul>
+                            <div class="solution-steps">
+                                <div class="step-item">
+                                    <span class="step-num">1</span>
+                                    <span>下载 <a href="https://github.com/UB-Mannheim/tesseract/wiki" target="_blank">Tesseract 安装包</a>（Windows选64位）</span>
+                                </div>
+                                <div class="step-item">
+                                    <span class="step-num">2</span>
+                                    <span>安装时勾选 "Additional language data" → "Chinese Simplified"</span>
+                                </div>
+                                <div class="step-item">
+                                    <span class="step-num">3</span>
+                                    <span>安装完成后，将安装路径添加到系统环境变量 PATH</span>
+                                </div>
+                                <div class="step-item">
+                                    <span class="step-num">4</span>
+                                    <span>重启本应用，在"图片识别方案"下拉框中选择 Tesseract OCR</span>
+                                </div>
+                            </div>
+                            <small style="color: var(--text-muted); display: block; margin-top: 8px;">
+                                💡 验证安装：打开命令行输入 <code>tesseract --version</code>，显示版本号即安装成功
+                            </small>
+                            <a href="https://tesseract-ocr.github.io/tessdoc/Installation.html" target="_blank" class="solution-link">详细安装指南 →</a>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -324,7 +451,7 @@
     <div class="modal-content">
         <div class="modal-header">
             <span class="modal-title">MCP服务器管理</span>
-            <button class="modal-close" data-target="mcp-modal">&times;</button>
+            <button class="modal-close" data-target="mcp-modal" data-return="settings-modal">&times;</button>
         </div>
         <div class="modal-body">
             <div class="mcp-list-container">
@@ -412,7 +539,7 @@
     <div class="modal-content">
         <div class="modal-header">
             <span class="modal-title">🌐 联网搜索配置</span>
-            <button class="modal-close" data-target="search-config-modal">&times;</button>
+            <button class="modal-close" data-target="search-config-modal" data-return="settings-modal">&times;</button>
         </div>
         <div class="modal-body">
             <div style="width: 100%;">
@@ -456,10 +583,10 @@
 </div>
 
 <!-- 引入Markdown处理模块 -->
-<script src="markdown.js?v=90"></script>
+<script src="markdown.js?v=128"></script>
 
 <!-- 引入外部JavaScript -->
-<script src="script.js?v=90"></script>
+<script src="script.js?v=147"></script>
 
 </body>
 </html>

@@ -132,20 +132,26 @@ class Provider(Base):
     api_key = Column(String(512), nullable=False)
     default_model = Column(String(255), nullable=False)
     models = Column(Text, nullable=True)  # 可选：逗号分隔模型列表
+    models_config = Column(Text, nullable=True)  # 模型配置JSON：包含功能标记等
     is_default = Column(Boolean, default=False, nullable=False)
 
     conversations = relationship("Conversation", back_populates="provider")
 
-    def to_dict(self):
-        return {
+    def to_dict(self, include_key_status: bool = True):
+        result = {
             "id": self.id,
             "name": self.name,
             "api_base": self.api_base,
-            "api_key": "***HIDDEN***" if self.api_key else None,  # 隐藏敏感信息
             "default_model": self.default_model,
             "models": self.models,
+            "models_config": self.models_config,
             "is_default": self.is_default,
         }
+        if include_key_status:
+            # 返回API Key是否已配置的状态，而不是实际值
+            result["has_api_key"] = bool(self.api_key)
+            result["api_key"] = "***HIDDEN***" if self.api_key else None
+        return result
 
 
 # 新增：知识库（可有多个库）

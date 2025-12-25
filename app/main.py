@@ -431,6 +431,7 @@ def _configure_ai_provider_for_conversation(
         provider = crud.get_provider(db, conversation.provider_id)
 
     if provider:
+        print(f"[DEBUG] 使用Provider: {provider.name}, API Base: {provider.api_base}, Has Key: {bool(provider.api_key)}")
         ai_manager.set_provider(
             api_base=provider.api_base,
             api_key=provider.api_key,
@@ -438,6 +439,7 @@ def _configure_ai_provider_for_conversation(
         )
     else:
         # 使用全局默认
+        print(f"[DEBUG] 使用全局默认, API Base: {settings.AI_API_BASE}, Has Key: {bool(settings.AI_API_KEY)}")
         ai_manager.set_provider(
             api_base=settings.AI_API_BASE,
             api_key=settings.AI_API_KEY,
@@ -655,11 +657,13 @@ def chat_with_conversation(
         logger.log_error(e, "配置Provider失败")
         raise
 
-    # 3. 准备上下文消息
-    messages_db = crud.get_messages(db, conversation_id)
+    # 3. 准备上下文消息（只包含完整问答对）
+    context_messages = crud.get_context_messages(db, conversation_id)
     messages: List[Dict[str, Any]] = [
-        {"role": m.role, "content": m.content} for m in messages_db
+        {"role": m.role, "content": m.content} for m in context_messages
     ]
+    # 添加当前用户消息
+    messages.append({"role": "user", "content": user_text})
 
     # 优化上下文，限制对话轮数为6轮
     messages = ContextManager.optimize_messages(messages, max_turns=6)
@@ -978,6 +982,25 @@ def list_providers(db: Session = Depends(get_db)):
     return [provider.to_dict() for provider in providers]
 
 
+@app.get("/providers/{provider_id}")
+def get_provider_detail(provider_id: int, db: Session = Depends(get_db)):
+    """获取单个Provider的详细信息（用于调试）"""
+    provider = crud.get_provider(db, provider_id)
+    if not provider:
+        raise HTTPException(status_code=404, detail="Provider not found")
+    # 返回是否有API Key的状态
+    return {
+        "id": provider.id,
+        "name": provider.name,
+        "api_base": provider.api_base,
+        "has_api_key": bool(provider.api_key),
+        "api_key_length": len(provider.api_key) if provider.api_key else 0,
+        "default_model": provider.default_model,
+        "models": provider.models,
+        "is_default": provider.is_default,
+    }
+
+
 @app.post("/providers")
 def create_provider(
     name: str = Form(...),
@@ -985,6 +1008,7 @@ def create_provider(
     api_key: str = Form(...),
     default_model: str = Form(...),
     models_str: Optional[str] = Form(None),
+    models_config: Optional[str] = Form(None),
     is_default: bool = Form(False),
     db: Session = Depends(get_db),
 ):
@@ -1001,6 +1025,7 @@ def create_provider(
             api_key=api_key,
             default_model=default_model,
             models_str=models_str,
+            models_config=models_config,
             is_default=is_default,
         )
         return provider.to_dict()
@@ -1021,17 +1046,22 @@ def update_provider(
     api_key: Optional[str] = Form(None),
     default_model: Optional[str] = Form(None),
     models_str: Optional[str] = Form(None),
+    models_config: Optional[str] = Form(None),
     is_default: Optional[bool] = Form(None),
     db: Session = Depends(get_db),
 ):
+    # 如果api_key为空字符串，则不更新（保持原值）
+    actual_api_key = api_key if api_key and api_key.strip() else None
+    
     provider = crud.update_provider(
         db,
         provider_id,
         name=name,
         api_base=api_base,
-        api_key=api_key,
+        api_key=actual_api_key,
         default_model=default_model,
         models_str=models_str,
+        models_config=models_config,
         is_default=is_default,
     )
     if not provider:
@@ -1069,29 +1099,57 @@ def get_provider_models(provider_id: int, db: Session = Depends(get_db)):
 @app.get("/models/all")
 def get_all_models(db: Session = Depends(get_db)):
     """获取所有Provider的模型列表，用于前端统一显示"""
+    import json
     providers = crud.list_providers(db)
     all_models = set()
+    models_caps = {}  # 存储每个模型的功能信息
+    models_names = {}  # 存储每个模型的自定义显示名称
     
     # 添加全局默认模型
     all_models.update(settings.ai_models)
     
     # 添加所有Provider的模型
     for provider in providers:
+        # 解析模型配置
+        config = {}
+        if provider.models_config:
+            try:
+                config = json.loads(provider.models_config)
+            except:
+                pass
+        
         if provider.models:
             provider_models = [m.strip() for m in provider.models.split(",") if m.strip()]
             all_models.update(provider_models)
+            # 合并功能信息和自定义名称
+            for model in provider_models:
+                if model in config:
+                    model_config = config[model]
+                    models_caps[model] = model_config
+                    # 提取自定义名称
+                    if model_config.get("custom_name"):
+                        models_names[model] = model_config["custom_name"]
         else:
             all_models.add(provider.default_model)
+        
+        # 默认模型的功能信息和自定义名称
+        if provider.default_model in config:
+            model_config = config[provider.default_model]
+            models_caps[provider.default_model] = model_config
+            if model_config.get("custom_name"):
+                models_names[provider.default_model] = model_config["custom_name"]
     
     return {
         "default": settings.AI_MODEL,
         "models": sorted(list(all_models)),
+        "models_caps": models_caps,  # 模型功能信息
+        "models_names": models_names,  # 模型自定义显示名称
         "providers": [
             {
                 "id": p.id,
                 "name": p.name,
                 "default_model": p.default_model,
-                "models": [m.strip() for m in p.models.split(",") if p.models and m.strip()] or [p.default_model]
+                "models": [m.strip() for m in p.models.split(",") if m.strip()] if p.models else [p.default_model]
             }
             for p in providers
         ]
@@ -1143,12 +1201,23 @@ def upload_knowledge_file(
     """
     上传一个文件到指定知识库：
     1. 保存原始文件；
-    2. 抽取文本；
+    2. 抽取文本（支持 PDF/DOCX/PPTX/XLSX/TXT/MD/CSV 等）；
     3. 切分为若干段落；
     4. 调用 embedding 接口生成向量；
     5. 存入 KnowledgeDocument + KnowledgeChunk；
     6. （可选）提取知识图谱实体和关系。
     """
+    from app.utils.document_parser import extract_text_from_file, get_supported_extensions
+    
+    # 检查文件格式
+    ext = os.path.splitext(file.filename)[1].lower()
+    supported = get_supported_extensions()
+    if ext not in supported:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"不支持的文件格式: {ext}。支持的格式: {', '.join(supported)}"
+        )
+    
     # 验证向量模型
     selected_embedding_model = embedding_model or settings.EMBEDDING_MODEL
     if selected_embedding_model and selected_embedding_model not in settings.embedding_models:
@@ -1162,20 +1231,32 @@ def upload_knowledge_file(
     with open(save_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
-    # 2. 简单读取文本
+    # 2. 提取文本（支持多种格式）
     try:
-        with open(save_path, "r", encoding="utf-8") as f:
-            content = f.read()
-    except UnicodeDecodeError:
-        raise HTTPException(status_code=400, detail="暂不支持非 UTF-8 文本文件作为知识库源。")
+        content = extract_text_from_file(save_path)
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"缺少依赖库: {e}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"文件解析失败: {e}")
 
-    # 3. 简单切分段落
+    # 3. 智能切分段落
     paragraphs: List[str] = []
     for line in content.splitlines():
         line = line.strip()
         if not line:
             continue
-        paragraphs.append(line)
+        # 如果段落太长，按句子切分
+        if len(line) > 500:
+            import re
+            sentences = re.split(r'(?<=[。！？.!?])\s*', line)
+            for sent in sentences:
+                sent = sent.strip()
+                if sent:
+                    paragraphs.append(sent)
+        else:
+            paragraphs.append(line)
 
     if not paragraphs:
         raise HTTPException(status_code=400, detail="文件中未检测到有效文本内容。")
@@ -1250,8 +1331,9 @@ def get_settings(db: Session = Depends(get_db)):
     settings_dict = {s.key: s.value for s in saved_settings}
     
     return {
-        "font_size": settings_dict.get("font_size", "13px"),
+        "layout_scale": settings_dict.get("layout_scale", "normal"),
         "auto_title_model": settings_dict.get("auto_title_model", "current"),
+        "ocr_method": settings_dict.get("ocr_method", ""),
         "default_search_source": settings_dict.get("default_search_source", "duckduckgo"),
         "tavily_api_key": settings_dict.get("tavily_api_key", ""),
         "global_api_key": settings_dict.get("global_api_key", getattr(settings, 'AI_API_KEY', '')),
@@ -1262,8 +1344,9 @@ def get_settings(db: Session = Depends(get_db)):
 
 @app.post("/settings")
 def update_settings(
-    font_size: Optional[str] = Form(None),
+    layout_scale: Optional[str] = Form(None),
     auto_title_model: Optional[str] = Form(None),
+    ocr_method: Optional[str] = Form(None),
     theme: Optional[str] = Form(None),
     language: Optional[str] = Form(None),
     default_search_source: Optional[str] = Form(None),
@@ -1277,12 +1360,15 @@ def update_settings(
     settings_data = {}
     
     # 保存设置到数据库
-    if font_size:
-        crud.set_setting(db, "font_size", font_size)
-        settings_data["font_size"] = font_size
+    if layout_scale:
+        crud.set_setting(db, "layout_scale", layout_scale)
+        settings_data["layout_scale"] = layout_scale
     if auto_title_model:
         crud.set_setting(db, "auto_title_model", auto_title_model)
         settings_data["auto_title_model"] = auto_title_model
+    if ocr_method is not None:  # 允许空字符串（表示不启用）
+        crud.set_setting(db, "ocr_method", ocr_method)
+        settings_data["ocr_method"] = ocr_method
     if theme:
         crud.set_setting(db, "theme", theme)
         settings_data["theme"] = theme
@@ -1927,6 +2013,142 @@ def get_rerank_models(db: Session = Depends(get_db)):
     }
 
 
+@app.get("/models/local-availability")
+def check_local_models_availability():
+    """检测本地模型的可用性"""
+    result = {
+        "tesseract": False,
+        "local_rag": False
+    }
+    
+    # 检测 Tesseract OCR
+    try:
+        import pytesseract
+        pytesseract.get_tesseract_version()
+        result["tesseract"] = True
+    except Exception:
+        pass
+    
+    # 检测本地 RAG (mcp-local-rag)
+    try:
+        import subprocess
+        # 检查 npx 是否可用，以及 mcp-local-rag 是否已安装
+        check_result = subprocess.run(
+            ["npx", "--yes", "mcp-local-rag", "--version"],
+            capture_output=True,
+            timeout=10
+        )
+        if check_result.returncode == 0:
+            result["local_rag"] = True
+    except Exception:
+        pass
+    
+    return result
+
+
+@app.post("/images/generate")
+@log_api_call
+def generate_image(
+    prompt: str = Form(...),
+    model: str = Form(...),
+    size: str = Form("1024x1024"),
+    n: int = Form(1),
+    provider_id: Optional[int] = Form(None),
+    conversation_id: Optional[int] = Form(None),
+    db: Session = Depends(get_db),
+):
+    """
+    生成图像 API
+    
+    参数：
+    - prompt: 图像描述
+    - model: 生图模型名称
+    - size: 图像尺寸
+    - n: 生成数量
+    - provider_id: 使用的 Provider ID
+    - conversation_id: 关联的对话 ID（可选，用于保存到对话历史）
+    """
+    from app.ai.ai_manager import AIManager
+    
+    # 配置 Provider
+    ai = AIManager()
+    
+    if provider_id:
+        provider = crud.get_provider(db, provider_id)
+        if provider:
+            ai.set_provider(
+                api_base=provider.api_base,
+                api_key=provider.api_key,
+                default_model=provider.default_model
+            )
+    
+    # 调用生图 API
+    result = ai.generate_image(
+        prompt=prompt,
+        model=model,
+        size=size,
+        n=n,
+        response_format="url"  # 优先返回 URL
+    )
+    
+    if not result["success"]:
+        # 如果 URL 格式失败，尝试 base64 格式
+        result = ai.generate_image(
+            prompt=prompt,
+            model=model,
+            size=size,
+            n=n,
+            response_format="b64_json"
+        )
+    
+    # 如果指定了对话 ID，将生成的图片保存到对话历史
+    if conversation_id and result["success"] and result["images"]:
+        conversation = crud.get_conversation(db, conversation_id)
+        if conversation:
+            # 构建包含图片的消息内容
+            image_content = f"**生成图片** (模型: {model}, 尺寸: {size})\n\n"
+            for i, img in enumerate(result["images"]):
+                if "url" in img:
+                    image_content += f"![生成的图片 {i+1}]({img['url']})\n\n"
+                elif "b64_json" in img:
+                    image_content += f"![生成的图片 {i+1}](data:image/png;base64,{img['b64_json']})\n\n"
+            
+            # 保存用户的生图请求
+            crud.create_message(db, conversation_id, "user", f"[生图请求] {prompt}")
+            # 保存生成结果
+            crud.create_message(db, conversation_id, "assistant", image_content)
+    
+    return result
+
+
+@app.get("/models/image-gen")
+def get_image_gen_models(db: Session = Depends(get_db)):
+    """获取可用的生图模型列表"""
+    providers = crud.list_providers(db)
+    
+    image_gen_models = []
+    
+    for provider in providers:
+        if provider.models_config:
+            try:
+                import json
+                models_config = json.loads(provider.models_config)
+                for model_name, caps in models_config.items():
+                    if caps.get("image_gen"):
+                        image_gen_models.append({
+                            "model": model_name,
+                            "provider_id": provider.id,
+                            "provider_name": provider.name,
+                            "custom_name": caps.get("custom_name", "")
+                        })
+            except:
+                pass
+    
+    return {
+        "models": image_gen_models
+    }
+
+
 # ========== 静态页面 ==========
 
 
@@ -1985,6 +2207,36 @@ def get_favicon():
         from fastapi.responses import Response
         return Response(content="", media_type="image/x-icon")
     return FileResponse(frontend_path, media_type="image/x-icon")
+
+@app.get("/lib/{filename:path}")
+def get_lib_file(filename: str):
+    """返回lib目录下的静态文件（JS库、CSS等）"""
+    frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "lib", filename)
+    frontend_path = os.path.abspath(frontend_path)
+    
+    # 安全检查：确保路径在lib目录内
+    lib_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "lib"))
+    if not frontend_path.startswith(lib_dir):
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    if not os.path.exists(frontend_path):
+        raise HTTPException(status_code=404, detail=f"Library file not found: {filename}")
+    
+    # 根据文件扩展名设置MIME类型
+    ext = os.path.splitext(filename)[1].lower()
+    mime_types = {
+        ".js": "application/javascript",
+        ".css": "text/css",
+        ".json": "application/json",
+        ".map": "application/json",
+        ".woff": "font/woff",
+        ".woff2": "font/woff2",
+        ".ttf": "font/ttf",
+        ".eot": "application/vnd.ms-fontobject",
+    }
+    media_type = mime_types.get(ext, "application/octet-stream")
+    
+    return FileResponse(frontend_path, media_type=media_type)
 
 @app.get("/render-logger.js")
 def get_render_logger_js():

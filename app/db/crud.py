@@ -125,6 +125,27 @@ def get_messages(db: Session, conversation_id: int) -> List[models.Message]:
     )
 
 
+def get_context_messages(db: Session, conversation_id: int) -> List[models.Message]:
+    """获取用于上下文的消息 - 只返回完整的问答对（不包括最后一条未回复的用户消息）"""
+    messages = get_messages(db, conversation_id)
+    
+    if not messages:
+        return []
+    
+    # 找出完整的问答对
+    context = []
+    i = 0
+    while i < len(messages) - 1:  # 不包括最后一条
+        if messages[i].role == "user" and i + 1 < len(messages) and messages[i + 1].role == "assistant":
+            context.append(messages[i])
+            context.append(messages[i + 1])
+            i += 2
+        else:
+            i += 1
+    
+    return context
+
+
 def create_uploaded_file(
     db: Session,
     conversation_id: int,
@@ -208,6 +229,7 @@ def create_provider(
     api_key: str,
     default_model: str,
     models_str: Optional[str] = None,
+    models_config: Optional[str] = None,
     is_default: bool = False,
 ) -> models.Provider:
     provider = models.Provider(
@@ -216,6 +238,7 @@ def create_provider(
         api_key=api_key,
         default_model=default_model,
         models=models_str,
+        models_config=models_config,
         is_default=is_default,
     )
     db.add(provider)
@@ -245,6 +268,7 @@ def update_provider(
     api_key: Optional[str] = None,
     default_model: Optional[str] = None,
     models_str: Optional[str] = None,
+    models_config: Optional[str] = None,
     is_default: Optional[bool] = None,
 ) -> Optional[models.Provider]:
     provider = get_provider(db, provider_id)
@@ -261,6 +285,8 @@ def update_provider(
         provider.default_model = default_model
     if models_str is not None:
         provider.models = models_str
+    if models_config is not None:
+        provider.models_config = models_config
     if is_default is not None:
         provider.is_default = is_default
 

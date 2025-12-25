@@ -12,11 +12,11 @@ let conversations = [];
 let providers = [];
 let knowledgeBases = [];
 let mcpServers = [];
+let selectedWebSource = "duckduckgo";  // 当前选中的搜索源
 let currentSettings = {
-    fontSize: "14px",
     autoTitleModel: "current",
     theme: "original",
-    density: "normal",  // 间距风格：compact / normal / airy
+    layout_scale: "normal",  // 界面比例：xs / sm / normal / lg / xl
     availableModels: []
 };
 
@@ -40,7 +40,7 @@ const autoTitleRequested = new Set();
 
 // DOM元素变量 - 统一声明
 let conversationListEl, chatMessagesEl, chatTitleEl, modelSelectEl, providerSelectEl;
-let userInputEl, toggleKnowledgeEl, toggleMcpEl, toggleWebEl, toggleStreamEl, webSearchSourceEl;
+let userInputEl, toggleKnowledgeEl, toggleMcpEl, toggleWebEl, toggleStreamEl;
 let providerModalEl, providerListEl, providerFormEl;
 let knowledgeModalEl, kbListEl, kbFormEl, kbSelectEl, kbUploadFormEl, kbUploadStatusEl, embeddingModelSelectEl;
 let mcpModalEl, mcpListEl, mcpFormEl, settingsModalEl;
@@ -51,6 +51,235 @@ function scrollToBottom() {
         chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
     }
 }
+
+// ========== 通用自定义下拉框组件 ==========
+
+// 将原生select转换为自定义下拉框
+function convertToCustomSelect(selectEl, options = {}) {
+    if (!selectEl || selectEl.dataset.customized === 'true') return;
+    
+    const {
+        dropDirection = 'down',  // 'up' 或 'down'
+        minWidth = null,
+        onSelect = null
+    } = options;
+    
+    // 创建包装器
+    const wrapper = document.createElement('div');
+    wrapper.className = 'custom-select custom-select-generic';
+    if (dropDirection === 'up') wrapper.classList.add('drop-up');
+    if (minWidth) wrapper.style.minWidth = minWidth;
+    
+    // 创建触发器
+    const trigger = document.createElement('div');
+    trigger.className = 'custom-select-trigger';
+    
+    const valueEl = document.createElement('span');
+    valueEl.className = 'custom-select-value';
+    valueEl.textContent = selectEl.options[selectEl.selectedIndex]?.text || '请选择';
+    
+    const arrow = document.createElement('span');
+    arrow.className = 'custom-select-arrow';
+    arrow.textContent = '▼';
+    
+    trigger.appendChild(valueEl);
+    trigger.appendChild(arrow);
+    
+    // 创建下拉列表
+    const dropdown = document.createElement('div');
+    dropdown.className = 'custom-select-dropdown';
+    
+    // 创建选项元素
+    function createOptionEl(opt) {
+        const optionEl = document.createElement('div');
+        optionEl.className = 'custom-select-option';
+        optionEl.dataset.value = opt.value;
+        optionEl.textContent = opt.text;
+        if (opt.disabled) {
+            optionEl.classList.add('disabled');
+        }
+        if (opt.value === selectEl.value) {
+            optionEl.classList.add('selected');
+        }
+        
+        if (!opt.disabled) {
+            optionEl.addEventListener('click', (e) => {
+                e.stopPropagation();
+                selectEl.value = opt.value;
+                selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+                valueEl.textContent = opt.text;
+                dropdown.querySelectorAll('.custom-select-option').forEach(o => o.classList.remove('selected'));
+                optionEl.classList.add('selected');
+                wrapper.classList.remove('open');
+                if (onSelect) onSelect(opt.value, opt.text);
+            });
+        }
+        
+        return optionEl;
+    }
+    
+    // 填充选项（简化版本，直接使用selectEl.options）
+    function populateOptions() {
+        dropdown.innerHTML = '';
+        let lastOptgroup = null;
+        
+        // 直接遍历所有options
+        Array.from(selectEl.options).forEach(opt => {
+            // 检查是否在optgroup中
+            const parentEl = opt.parentElement;
+            const isInGroup = parentEl && parentEl.tagName === 'OPTGROUP';
+            
+            // 如果是新的optgroup，添加分组标题
+            if (isInGroup && parentEl !== lastOptgroup) {
+                lastOptgroup = parentEl;
+                const groupLabel = document.createElement('div');
+                groupLabel.className = 'custom-select-group-label';
+                groupLabel.textContent = parentEl.label;
+                dropdown.appendChild(groupLabel);
+            }
+            
+            const optionEl = createOptionEl(opt);
+            if (isInGroup) {
+                optionEl.classList.add('in-group');
+            }
+            dropdown.appendChild(optionEl);
+        });
+    }
+    
+    populateOptions();
+    
+    // 组装
+    wrapper.appendChild(trigger);
+    wrapper.appendChild(dropdown);
+    
+    // 隐藏原始select并插入自定义组件
+    selectEl.style.display = 'none';
+    selectEl.dataset.customized = 'true';
+    selectEl.parentNode.insertBefore(wrapper, selectEl.nextSibling);
+    
+    // 更新下拉框位置（使用fixed定位避免被overflow裁剪）
+    function updateDropdownPosition() {
+        const rect = trigger.getBoundingClientRect();
+        const dropdownHeight = dropdown.offsetHeight || 200;
+        const spaceBelow = window.innerHeight - rect.bottom;
+        const spaceAbove = rect.top;
+        
+        // 判断向上还是向下展开
+        let showAbove = dropDirection === 'up';
+        if (dropDirection === 'down' && spaceBelow < dropdownHeight && spaceAbove > spaceBelow) {
+            showAbove = true;
+        }
+        
+        dropdown.style.left = rect.left + 'px';
+        dropdown.style.width = rect.width + 'px';
+        
+        if (showAbove) {
+            dropdown.style.top = 'auto';
+            dropdown.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
+        } else {
+            dropdown.style.top = (rect.bottom + 4) + 'px';
+            dropdown.style.bottom = 'auto';
+        }
+    }
+    
+    // 事件处理
+    trigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // 关闭其他打开的下拉框
+        document.querySelectorAll('.custom-select-generic.open').forEach(el => {
+            if (el !== wrapper) el.classList.remove('open');
+        });
+        
+        const isOpening = !wrapper.classList.contains('open');
+        wrapper.classList.toggle('open');
+        
+        if (isOpening) {
+            updateDropdownPosition();
+        }
+    });
+    
+    // 监听原始select变化，同步更新显示
+    selectEl.addEventListener('change', () => {
+        const selectedOpt = selectEl.options[selectEl.selectedIndex];
+        if (selectedOpt) {
+            valueEl.textContent = selectedOpt.text;
+            dropdown.querySelectorAll('.custom-select-option').forEach(o => {
+                o.classList.toggle('selected', o.dataset.value === selectEl.value);
+            });
+        }
+    });
+    
+    // 提供刷新选项的方法
+    wrapper.refreshOptions = () => {
+        populateOptions();
+        const selectedOpt = selectEl.options[selectEl.selectedIndex];
+        if (selectedOpt) {
+            valueEl.textContent = selectedOpt.text;
+        }
+    };
+    
+    // 存储引用
+    selectEl._customWrapper = wrapper;
+    
+    return wrapper;
+}
+
+// 刷新自定义下拉框选项（当原生select选项变化时调用）
+function refreshCustomSelect(selectEl) {
+    if (selectEl && selectEl._customWrapper && selectEl._customWrapper.refreshOptions) {
+        selectEl._customWrapper.refreshOptions();
+    }
+}
+
+// 初始化设置页面的所有下拉框
+function initSettingsCustomSelects() {
+    // 主页面的provider下拉框（向上展开）
+    const providerSelect = document.getElementById('provider-select');
+    if (providerSelect) {
+        convertToCustomSelect(providerSelect, { dropDirection: 'up' });
+    }
+    
+    // 设置页面的下拉框ID列表
+    const settingsSelectIds = [
+        'layout-scale-select',
+        'auto-title-model-select',
+        'ocr-method-select',
+        'export-logs-hours',
+        'search-default-source',
+        'mcp-connection-type'
+    ];
+    
+    settingsSelectIds.forEach(id => {
+        const selectEl = document.getElementById(id);
+        if (selectEl) {
+            convertToCustomSelect(selectEl, { dropDirection: 'down' });
+        }
+    });
+    
+    // 知识库相关下拉框
+    const kbSelectIds = [
+        'kb-select',
+        'embedding-model-select',
+        'rerank-model-select',
+        'kb-vision-model-select'
+    ];
+    
+    kbSelectIds.forEach(id => {
+        const selectEl = document.getElementById(id);
+        if (selectEl) {
+            convertToCustomSelect(selectEl, { dropDirection: 'down' });
+        }
+    });
+}
+
+// 全局点击关闭下拉框
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.custom-select-generic')) {
+        document.querySelectorAll('.custom-select-generic.open').forEach(el => {
+            el.classList.remove('open');
+        });
+    }
+});
 
 // 初始化DOM元素引用
 function initDOMElements() {
@@ -64,7 +293,6 @@ function initDOMElements() {
     toggleMcpEl = document.getElementById("toggle-mcp");
     toggleWebEl = document.getElementById("toggle-web");
     toggleStreamEl = document.getElementById("toggle-stream");
-    webSearchSourceEl = document.getElementById("web-search-source");
     providerModalEl = document.getElementById("provider-modal");
     providerListEl = document.getElementById("provider-list");
     providerFormEl = document.getElementById("provider-form");
@@ -104,15 +332,28 @@ function loadToolSettings() {
         if (saved) {
             const settings = JSON.parse(saved);
             if (toggleKnowledgeEl) toggleKnowledgeEl.checked = settings.knowledge || false;
-            if (toggleMcpEl) toggleMcpEl.checked = settings.mcp || false;
+            // MCP 状态由选中的服务决定，不直接从 settings.mcp 恢复
             if (toggleWebEl) toggleWebEl.checked = settings.web || false;
             if (toggleStreamEl) toggleStreamEl.checked = settings.stream !== undefined ? settings.stream : true;
             
-            // 更新搜索源选择器的显示状态
-            if (webSearchSourceEl && toggleWebEl) {
-                webSearchSourceEl.style.display = toggleWebEl.checked ? "inline-block" : "none";
-                if (settings.webSearchSource) {
-                    webSearchSourceEl.value = settings.webSearchSource;
+            // 恢复 MCP 服务器选中状态
+            if (settings.selectedMcpServers && Array.isArray(settings.selectedMcpServers)) {
+                mcpServers.forEach(server => {
+                    server.selected = settings.selectedMcpServers.includes(server.id);
+                });
+                // 更新 MCP 按钮状态
+                updateMcpToggleState();
+            }
+            
+            // 更新搜索源
+            if (settings.webSearchSource) {
+                selectedWebSource = settings.webSearchSource;
+                // 更新弹出框中的选中状态
+                const webPopup = document.getElementById('web-popup');
+                if (webPopup) {
+                    webPopup.querySelectorAll('input[name="web-source"]').forEach(radio => {
+                        radio.checked = radio.value === selectedWebSource;
+                    });
                 }
             }
         }
@@ -124,12 +365,18 @@ function loadToolSettings() {
 // 保存工具设置
 function saveToolSettings() {
     try {
+        // 收集选中的 MCP 服务器 ID
+        const selectedMcpServers = mcpServers
+            .filter(s => s.is_enabled && s.selected)
+            .map(s => s.id);
+        
         const settings = {
             knowledge: toggleKnowledgeEl ? toggleKnowledgeEl.checked : false,
             mcp: toggleMcpEl ? toggleMcpEl.checked : false,
             web: toggleWebEl ? toggleWebEl.checked : false,
             stream: toggleStreamEl ? toggleStreamEl.checked : true,
-            webSearchSource: webSearchSourceEl ? webSearchSourceEl.value : "duckduckgo"
+            webSearchSource: selectedWebSource,
+            selectedMcpServers: selectedMcpServers
         };
         localStorage.setItem(TOOL_SETTINGS_KEY, JSON.stringify(settings));
     } catch (e) {
@@ -144,14 +391,6 @@ function setupToolSettingsListeners() {
     if (toggleMcpEl) toggleMcpEl.addEventListener('change', saveToolSettings);
     if (toggleWebEl) toggleWebEl.addEventListener('change', saveToolSettings);
     if (toggleStreamEl) toggleStreamEl.addEventListener('change', saveToolSettings);
-    if (webSearchSourceEl) webSearchSourceEl.addEventListener('change', saveToolSettings);
-    
-    // 联网搜索开关控制搜索源选择器显示
-    if (toggleWebEl && webSearchSourceEl) {
-        toggleWebEl.addEventListener("change", () => {
-            webSearchSourceEl.style.display = toggleWebEl.checked ? "inline-block" : "none";
-        });
-    }
 }
 // Modal 控制函数
 function openModal(id) {
@@ -171,13 +410,9 @@ async function loadSettings() {
         if (!res.ok) return;
         const settings = await res.json();
         
-        // 更新设置界面
-        const fontSizeSelect = document.getElementById("font-size-select");
-        if (fontSizeSelect) fontSizeSelect.value = settings.font_size || "13px";
-        
-        // 更新间距风格选择器
-        const densitySelect = document.getElementById("density-select");
-        if (densitySelect) densitySelect.value = settings.density || "normal";
+        // 更新界面比例选择器
+        const layoutScaleSelect = document.getElementById("layout-scale-select");
+        if (layoutScaleSelect) layoutScaleSelect.value = settings.layout_scale || "normal";
         
         const searchDefaultSource = document.getElementById("search-default-source");
         if (searchDefaultSource) searchDefaultSource.value = settings.default_search_source || "duckduckgo";
@@ -213,6 +448,15 @@ async function loadSettings() {
             }
             
             autoTitleSelect.value = settings.auto_title_model || "current";
+            refreshCustomSelect(autoTitleSelect);
+        }
+        
+        // 加载视觉模型后设置OCR方法
+        await loadVisionModels();
+        const ocrMethodSelect = document.getElementById("ocr-method-select");
+        if (ocrMethodSelect && settings.ocr_method) {
+            ocrMethodSelect.value = settings.ocr_method;
+            refreshCustomSelect(ocrMethodSelect);
         }
         
         // 应用设置
@@ -220,8 +464,8 @@ async function loadSettings() {
         currentSettings = {...settings, available_models: availableModels};
         
         // 设置搜索源默认值
-        if (webSearchSourceEl) {
-            webSearchSourceEl.value = settings.default_search_source || "duckduckgo";
+        if (settings.default_search_source) {
+            selectedWebSource = settings.default_search_source;
         }
     } catch(e) { 
         console.error("加载设置失败:", e); 
@@ -229,38 +473,17 @@ async function loadSettings() {
 }
 
 function applySettings(settings) {
-    // 应用字体大小到整个页面和聊天消息容器
-    if (settings.font_size) {
-        document.body.style.fontSize = settings.font_size;
-        // 同时更新CSS变量，影响所有元素
-        document.documentElement.style.setProperty('--base-font-size', settings.font_size);
-        
-        // 将字体大小应用到聊天消息容器，让em单位的间距随之缩放
-        const chatMessages = document.getElementById("chat-messages");
-        if (chatMessages) {
-            chatMessages.style.fontSize = settings.font_size;
-        }
-        
-        // 根据字体大小调整侧边栏缩放比例
-        const baseFontSize = 13; // 基准字体大小
-        const currentFontSize = parseInt(settings.font_size);
-        const scale = currentFontSize / baseFontSize;
-        
-        // 字体越小，侧边栏越小
-        const sidebarScale = Math.max(0.7, Math.min(1.3, scale));
-        document.documentElement.style.setProperty('--sidebar-scale', sidebarScale);
-    }
-    
-    // 应用间距风格到聊天消息容器
-    if (settings.density) {
-        currentSettings.density = settings.density;
-        const chatMessages = document.getElementById("chat-messages");
-        if (chatMessages) {
-            chatMessages.setAttribute('data-density', settings.density);
-        }
+    // 应用界面比例
+    if (settings.layout_scale) {
+        currentSettings.layout_scale = settings.layout_scale;
+        document.body.setAttribute('data-layout-scale', settings.layout_scale);
     }
 }
+
 // 数据加载函数
+let modelsCaps = {};  // 存储模型功能信息
+let modelsNames = {};  // 存储模型自定义显示名称
+
 async function loadModels() {
     try {
         const res = await fetch(`${apiBase}/models/all`);
@@ -273,16 +496,163 @@ async function loadModels() {
             return;
         }
         
+        // 保存模型功能信息和自定义名称
+        modelsCaps = data.models_caps || {};
+        modelsNames = data.models_names || {};
+        
+        // 更新隐藏的原生 select（用于表单提交等）
         modelSelectEl.innerHTML = "";
         const models = data.models || [];
         models.forEach(m => {
             const opt = document.createElement("option");
             opt.value = m;
-            opt.textContent = m === data.default ? `${m} (默认)` : m;
+            const displayName = modelsNames[m] || m;
+            opt.textContent = displayName + (m === data.default ? " (默认)" : "");
             modelSelectEl.appendChild(opt);
         });
         if(data.default) modelSelectEl.value = data.default;
+        
+        // 更新自定义下拉组件
+        updateCustomModelSelect(models, data.default);
+        
+        // 更新模型功能标识（显示在选择框外）
+        updateModelCapsBadge();
+        
+        // 添加模型选择变化监听
+        modelSelectEl.removeEventListener("change", updateModelCapsBadge);
+        modelSelectEl.addEventListener("change", updateModelCapsBadge);
     } catch(e) { console.error(e); }
+}
+
+// 更新自定义模型下拉组件
+function updateCustomModelSelect(models, defaultModel) {
+    const dropdown = document.getElementById("model-select-dropdown");
+    const trigger = document.getElementById("model-select-trigger");
+    const valueEl = trigger?.querySelector(".custom-select-value");
+    
+    if (!dropdown || !trigger || !valueEl) return;
+    
+    dropdown.innerHTML = "";
+    
+    if (!models || models.length === 0) {
+        valueEl.textContent = "未配置";
+        return;
+    }
+    
+    models.forEach(m => {
+        const displayName = modelsNames[m] || m;
+        const caps = modelsCaps[m] || {};
+        
+        const optionEl = document.createElement("div");
+        optionEl.className = "custom-select-option";
+        optionEl.dataset.value = m;
+        
+        // 模型名称（左对齐）
+        const nameEl = document.createElement("span");
+        nameEl.className = "option-name";
+        nameEl.textContent = displayName + (m === defaultModel ? " (默认)" : "");
+        optionEl.appendChild(nameEl);
+        
+        // 功能图标（右对齐）
+        const capsEl = document.createElement("span");
+        capsEl.className = "option-caps";
+        if (caps.vision) capsEl.innerHTML += '<span title="视觉">👁</span>';
+        if (caps.reasoning) capsEl.innerHTML += '<span title="推理">🧠</span>';
+        if (caps.chat) capsEl.innerHTML += '<span title="对话">💬</span>';
+        if (caps.image_gen) capsEl.innerHTML += '<span title="生图">🎨</span>';
+        optionEl.appendChild(capsEl);
+        
+        // 点击选择
+        optionEl.addEventListener("click", () => {
+            selectModelOption(m, displayName + (m === defaultModel ? " (默认)" : ""));
+        });
+        
+        dropdown.appendChild(optionEl);
+    });
+    
+    // 设置当前选中值
+    const currentValue = modelSelectEl?.value || defaultModel;
+    if (currentValue) {
+        const currentDisplayName = modelsNames[currentValue] || currentValue;
+        valueEl.textContent = currentDisplayName + (currentValue === defaultModel ? " (默认)" : "");
+        // 标记选中项
+        dropdown.querySelectorAll(".custom-select-option").forEach(opt => {
+            opt.classList.toggle("selected", opt.dataset.value === currentValue);
+        });
+    }
+}
+
+// 选择模型选项
+function selectModelOption(value, displayText) {
+    const wrapper = document.getElementById("model-select-wrapper");
+    const trigger = document.getElementById("model-select-trigger");
+    const dropdown = document.getElementById("model-select-dropdown");
+    const valueEl = trigger?.querySelector(".custom-select-value");
+    
+    if (modelSelectEl) {
+        modelSelectEl.value = value;
+        modelSelectEl.dispatchEvent(new Event("change"));
+    }
+    
+    if (valueEl) {
+        valueEl.textContent = displayText;
+    }
+    
+    // 更新选中状态
+    dropdown?.querySelectorAll(".custom-select-option").forEach(opt => {
+        opt.classList.toggle("selected", opt.dataset.value === value);
+    });
+    
+    // 关闭下拉框
+    wrapper?.classList.remove("open");
+    
+    // 更新功能标识
+    updateModelCapsBadge();
+}
+
+// 初始化自定义下拉组件事件
+function initCustomModelSelect() {
+    const wrapper = document.getElementById("model-select-wrapper");
+    const trigger = document.getElementById("model-select-trigger");
+    
+    if (!wrapper || !trigger) return;
+    
+    // 点击触发器切换下拉框
+    trigger.addEventListener("click", (e) => {
+        e.stopPropagation();
+        wrapper.classList.toggle("open");
+    });
+    
+    // 点击外部关闭下拉框
+    document.addEventListener("click", (e) => {
+        if (!wrapper.contains(e.target)) {
+            wrapper.classList.remove("open");
+        }
+    });
+}
+
+// 更新模型功能标识
+function updateModelCapsBadge() {
+    const badge = document.getElementById("model-caps-badge");
+    if (!badge || !modelSelectEl) return;
+    const selectedModel = modelSelectEl.value;
+    const caps = modelsCaps[selectedModel] || {};
+    
+    let html = "";
+    if (caps.vision) {
+        html += '<span class="cap-icon active" title="视觉">👁</span>';
+    }
+    if (caps.reasoning) {
+        html += '<span class="cap-icon active" title="推理">🧠</span>';
+    }
+    if (caps.chat) {
+        html += '<span class="cap-icon active" title="对话">💬</span>';
+    }
+    if (caps.image_gen) {
+        html += '<span class="cap-icon active" title="生图">🎨</span>';
+    }
+    
+    badge.innerHTML = html;
 }
 
 async function loadConversations() {
@@ -311,14 +681,28 @@ function renderProviderSelect() {
     if (!providerSelectEl) return;
     
     const currentVal = providerSelectEl.value;
-    providerSelectEl.innerHTML = `<option value="">(使用系统默认)</option>`;
+    providerSelectEl.innerHTML = "";
+    
+    if (providers.length === 0) {
+        providerSelectEl.innerHTML = `<option value="">未配置</option>`;
+        refreshCustomSelect(providerSelectEl);
+        return;
+    }
+    
     providers.forEach(p => {
         const opt = document.createElement("option");
         opt.value = String(p.id);
-        opt.textContent = p.name + (p.is_default ? " (默认)" : "");
+        opt.textContent = p.name;
         providerSelectEl.appendChild(opt);
     });
-    if (currentVal) providerSelectEl.value = currentVal;
+    
+    // 如果之前有选中值则保持，否则选中第一个
+    if (currentVal && providers.some(p => String(p.id) === currentVal)) {
+        providerSelectEl.value = currentVal;
+    } else if (providers.length > 0) {
+        providerSelectEl.value = String(providers[0].id);
+    }
+    refreshCustomSelect(providerSelectEl);
 }
 
 async function loadKnowledgeBases() {
@@ -336,12 +720,25 @@ async function loadMCPServers() {
         if (!res.ok) return;
         const raw = await res.json();
         mcpServers = normalizeApiResponse(raw) || [];
+        // 加载后更新 MCP 按钮状态
+        updateMcpToggleState();
     } catch(e) { console.error(e); }
 }
 
 // 加载向量模型列表
 async function loadEmbeddingModels() {
     try {
+        // 先检测本地模型可用性
+        let localAvailability = { tesseract: false, local_rag: false };
+        try {
+            const localRes = await fetch(`${apiBase}/models/local-availability`);
+            if (localRes.ok) {
+                localAvailability = await localRes.json();
+            }
+        } catch (e) {
+            console.warn("检测本地模型可用性失败:", e);
+        }
+        
         const res = await fetch(`${apiBase}/knowledge/embedding-models`);
         if (!res.ok) return;
         const raw = await res.json();
@@ -354,68 +751,165 @@ async function loadEmbeddingModels() {
         
         embeddingModelSelectEl.innerHTML = "";
         
+        // 添加默认选项
+        const defaultOpt = document.createElement("option");
+        defaultOpt.value = "";
+        defaultOpt.textContent = "请选择向量模型";
+        embeddingModelSelectEl.appendChild(defaultOpt);
+        
+        // 如果本地 RAG 可用，添加本地选项
+        if (localAvailability.local_rag) {
+            const localOpt = document.createElement("option");
+            localOpt.value = "local-rag";
+            localOpt.textContent = "本地 RAG 模型 (mcp-local-rag)";
+            embeddingModelSelectEl.appendChild(localOpt);
+        }
+        
         // 显示/隐藏本地 RAG 推荐
         const localRagInfo = document.getElementById("local-rag-info");
         
         if (!data.models || data.models.length === 0) {
-            const opt = document.createElement("option");
-            opt.value = "";
-            opt.textContent = data.message || "无可用向量模型";
-            opt.disabled = true;
-            embeddingModelSelectEl.appendChild(opt);
+            if (!localAvailability.local_rag) {
+                // 没有任何可用模型
+                const opt = document.createElement("option");
+                opt.value = "";
+                opt.textContent = data.message || "无可用向量模型";
+                opt.disabled = true;
+                embeddingModelSelectEl.appendChild(opt);
+            }
             
             // 没有向量模型时显示本地 RAG 推荐
             if (localRagInfo) localRagInfo.style.display = "block";
+            refreshCustomSelect(embeddingModelSelectEl);
             return;
         }
         
         // 有向量模型时隐藏推荐
         if (localRagInfo) localRagInfo.style.display = "none";
         
+        // 添加 API 模型选项组
         const models = data.models || [];
-        models.forEach(m => {
-            const opt = document.createElement("option");
-            opt.value = m;
-            opt.textContent = m === data.default ? `${m} (默认)` : m;
-            embeddingModelSelectEl.appendChild(opt);
-        });
+        if (models.length > 0) {
+            const optgroup = document.createElement("optgroup");
+            optgroup.label = "API 向量模型";
+            models.forEach(m => {
+                const opt = document.createElement("option");
+                opt.value = m;
+                opt.textContent = m === data.default ? `${m} (默认)` : m;
+                optgroup.appendChild(opt);
+            });
+            embeddingModelSelectEl.appendChild(optgroup);
+        }
+        
         if(data.default) embeddingModelSelectEl.value = data.default;
+        refreshCustomSelect(embeddingModelSelectEl);
     } catch(e) { console.error(e); }
 }
-// 加载视觉模型列表
+// 加载视觉模型列表 - 从已配置的模型中筛选支持视觉的
 async function loadVisionModels() {
     try {
-        const res = await fetch(`${apiBase}/models/vision`);
-        if (!res.ok) return;
-        const data = await res.json();
+        // 先检测本地模型可用性
+        let localAvailability = { tesseract: false, local_rag: false };
+        try {
+            const localRes = await fetch(`${apiBase}/models/local-availability`);
+            if (localRes.ok) {
+                localAvailability = await localRes.json();
+            }
+        } catch (e) {
+            console.warn("检测本地模型可用性失败:", e);
+        }
         
-        // 更新设置页面的视觉模型选择器
-        const visionModelSelect = document.getElementById("vision-model-select");
-        if (visionModelSelect) {
-            visionModelSelect.innerHTML = '<option value="">选择视觉模型</option>';
-            if (data.models && data.models.length > 0) {
-                data.models.forEach(m => {
-                    const opt = document.createElement("option");
-                    opt.value = m;
-                    opt.textContent = m === data.default ? `${m} (默认)` : m;
-                    visionModelSelect.appendChild(opt);
-                });
-                if(data.default) visionModelSelect.value = data.default;
+        // 获取支持视觉的模型列表
+        const visionModels = [];
+        for (const [model, caps] of Object.entries(modelsCaps)) {
+            if (caps.vision) {
+                visionModels.push(model);
             }
         }
         
-        // 更新知识库页面的视觉模型选择器
+        // 也尝试从后端获取（兼容旧数据）
+        try {
+            const res = await fetch(`${apiBase}/models/vision`);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.models) {
+                    data.models.forEach(m => {
+                        if (!visionModels.includes(m)) {
+                            visionModels.push(m);
+                        }
+                    });
+                }
+            }
+        } catch (e) {}
+        
+        // 更新知识库页面的图片识别方案选择器
         const kbVisionModelSelect = document.getElementById("kb-vision-model-select");
         if (kbVisionModelSelect) {
-            kbVisionModelSelect.innerHTML = '<option value="">不使用视觉模型</option>';
-            if (data.models && data.models.length > 0) {
-                data.models.forEach(m => {
-                    const opt = document.createElement("option");
-                    opt.value = m;
-                    opt.textContent = m;
-                    kbVisionModelSelect.appendChild(opt);
-                });
+            const currentValue = kbVisionModelSelect.value;
+            kbVisionModelSelect.innerHTML = '<option value="">不启用</option>';
+            
+            // 只有本地 Tesseract 可用时才显示
+            if (localAvailability.tesseract) {
+                const opt = document.createElement("option");
+                opt.value = "tesseract";
+                opt.textContent = "Tesseract OCR (本地)";
+                kbVisionModelSelect.appendChild(opt);
             }
+            
+            // 添加视觉模型选项
+            if (visionModels.length > 0) {
+                const optgroup = document.createElement("optgroup");
+                optgroup.label = "视觉模型";
+                visionModels.forEach(m => {
+                    const opt = document.createElement("option");
+                    opt.value = `vision:${m}`;
+                    const displayName = modelsNames[m] || m;
+                    opt.textContent = displayName;
+                    optgroup.appendChild(opt);
+                });
+                kbVisionModelSelect.appendChild(optgroup);
+            }
+            
+            // 恢复之前的选择
+            if (currentValue) {
+                kbVisionModelSelect.value = currentValue;
+            }
+            refreshCustomSelect(kbVisionModelSelect);
+        }
+        
+        // 更新设置页面的OCR方法选择器
+        const ocrMethodSelect = document.getElementById("ocr-method-select");
+        if (ocrMethodSelect) {
+            const currentValue = ocrMethodSelect.value;
+            ocrMethodSelect.innerHTML = '<option value="">不启用</option>';
+            
+            // 只有本地 Tesseract 可用时才显示
+            if (localAvailability.tesseract) {
+                const opt = document.createElement("option");
+                opt.value = "tesseract";
+                opt.textContent = "Tesseract OCR (本地)";
+                ocrMethodSelect.appendChild(opt);
+            }
+            
+            // 添加视觉模型选项
+            if (visionModels.length > 0) {
+                const optgroup = document.createElement("optgroup");
+                optgroup.label = "视觉模型";
+                visionModels.forEach(m => {
+                    const opt = document.createElement("option");
+                    opt.value = `vision:${m}`;
+                    const displayName = modelsNames[m] || m;
+                    opt.textContent = displayName;
+                    optgroup.appendChild(opt);
+                });
+                ocrMethodSelect.appendChild(optgroup);
+            }
+            
+            // 恢复之前的选择
+            if (currentValue) {
+                ocrMethodSelect.value = currentValue;
+            }
+            refreshCustomSelect(ocrMethodSelect);
         }
     } catch(e) { console.error(e); }
 }
@@ -438,6 +932,7 @@ async function loadRerankModels() {
                     rerankModelSelect.appendChild(opt);
                 });
             }
+            refreshCustomSelect(rerankModelSelect);
         }
     } catch(e) { console.error(e); }
 }
@@ -483,11 +978,11 @@ function renderConversationList() {
             e.preventDefault();
             e.stopPropagation();
             
-            // 如果正在流式输出且不是当前对话，给出提示
+            // 如果正在流式输出且不是当前对话，直接切换
             if (isStreaming && conv.id !== currentConversationId) {
-                const confirmSwitch = confirm("当前正在进行AI对话，切换对话将停止当前输出。确定要切换吗？");
-                if (!confirmSwitch) {
-                    return;
+                // 停止当前输出
+                if (typeof stopStreaming === 'function') {
+                    stopStreaming();
                 }
             }
             
@@ -703,18 +1198,23 @@ function appendMessage(role, content, tokenInfo = null, showFooter = true) {
 function renderMarkdown(el, markdown, isComplete = true) {
     if (!el) return;
     
-    if (window.MarkdownEngine && window.MarkdownEngine.renderToEl) {
+    // 如果 MarkdownEngine 可用且 marked 已加载
+    if (window.MarkdownEngine && window.MarkdownEngine.renderToEl && window.MarkdownEngine.isReady && window.MarkdownEngine.isReady()) {
         window.MarkdownEngine.renderToEl(el, markdown, isComplete);
         if (isComplete && window.MarkdownEngine.addCopyButtons) {
             window.MarkdownEngine.addCopyButtons(el);
         }
-    } else {
+    } else if (typeof marked !== 'undefined') {
         // 降级：使用 marked 直接渲染
-        if (typeof marked !== 'undefined') {
-            el.innerHTML = DOMPurify ? DOMPurify.sanitize(marked.parse(markdown)) : marked.parse(markdown);
-        } else {
+        try {
+            let html = marked.parse(markdown || '');
+            el.innerHTML = typeof DOMPurify !== 'undefined' ? DOMPurify.sanitize(html) : html;
+        } catch (e) {
             el.textContent = markdown;
         }
+    } else {
+        // 最终降级：纯文本显示，保留换行
+        el.innerHTML = (markdown || '').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
     }
 }
 
@@ -863,8 +1363,8 @@ async function regenerateLastMessage() {
     formData.append("enable_knowledge_base", toggleKnowledgeEl && toggleKnowledgeEl.checked ? "true" : "false");
     formData.append("enable_mcp", toggleMcpEl && toggleMcpEl.checked ? "true" : "false");
     formData.append("enable_web_search", toggleWebEl && toggleWebEl.checked ? "true" : "false");
-    if (toggleWebEl && toggleWebEl.checked && webSearchSourceEl) {
-        formData.append("web_search_source", webSearchSourceEl.value || "duckduckgo");
+    if (toggleWebEl && toggleWebEl.checked) {
+        formData.append("web_search_source", selectedWebSource || "duckduckgo");
     }
     const providerId = providerSelectEl && providerSelectEl.value ? parseInt(providerSelectEl.value) : null;
     if (providerId !== null && !isNaN(providerId)) {
@@ -1124,6 +1624,25 @@ async function sendMessage() {
         return;
     }
     
+    // 检查是否开启了生图模式
+    const toggleImageGen = document.getElementById('toggle-image-gen');
+    if (toggleImageGen && toggleImageGen.checked) {
+        const text = userInputEl ? userInputEl.value.trim() : "";
+        if (!text) return;
+        userInputEl.value = "";
+        resetInputHeight();
+        await sendImageGenRequest(text);
+        return;
+    }
+    
+    // 检查是否有可用的Provider
+    const selectedProviderId = providerSelectEl ? providerSelectEl.value : "";
+    if (!selectedProviderId && providers.length === 0) {
+        alert("请先配置 Provider（API服务商）\n\n点击左下角 ⚙️ 设置 → 管理 Provider");
+        openModal("settings-modal");
+        return;
+    }
+    
     if (!userInputEl) return;
     
     const text = userInputEl.value.trim();
@@ -1141,13 +1660,19 @@ async function sendMessage() {
     formData.append("enable_knowledge_base", toggleKnowledgeEl && toggleKnowledgeEl.checked ? "true" : "false");
     formData.append("enable_mcp", toggleMcpEl && toggleMcpEl.checked ? "true" : "false");
     formData.append("enable_web_search", toggleWebEl && toggleWebEl.checked ? "true" : "false");
-    if (toggleWebEl && toggleWebEl.checked && webSearchSourceEl) {
-        formData.append("web_search_source", webSearchSourceEl.value || "duckduckgo");
+    if (toggleWebEl && toggleWebEl.checked) {
+        formData.append("web_search_source", selectedWebSource || "duckduckgo");
     }
-    const providerId = providerSelectEl && providerSelectEl.value ? parseInt(providerSelectEl.value) : null;
+    
+    // 获取 Provider ID：优先使用选中的，否则使用第一个可用的
+    let providerId = providerSelectEl && providerSelectEl.value ? parseInt(providerSelectEl.value) : null;
+    if ((providerId === null || isNaN(providerId)) && providers.length > 0) {
+        providerId = providers[0].id;
+    }
     if (providerId !== null && !isNaN(providerId)) {
         formData.append("provider_id", String(providerId));
     }
+    
     const useStream = toggleStreamEl ? toggleStreamEl.checked : true;
     formData.append("stream", useStream ? "true" : "false");
     
@@ -1533,7 +2058,10 @@ function setupEventListeners() {
     document.querySelectorAll(".modal-close").forEach(btn => {
         btn.addEventListener("click", () => {
             const target = btn.getAttribute("data-target");
+            const returnTo = btn.getAttribute("data-return");
             if (target) closeModal(target);
+            // 如果有返回目标，打开返回的modal
+            if (returnTo) openModal(returnTo);
         });
     });
 
@@ -1548,23 +2076,7 @@ function setupEventListeners() {
     const newConvBtn = document.getElementById("new-conversation-btn");
     if (newConvBtn) {
         newConvBtn.addEventListener("click", async () => {
-            try {
-                const formData = new FormData();
-                formData.append("title", "新对话");
-                const res = await fetch(`${apiBase}/conversations`, {method: "POST", body: formData});
-                if (!res.ok) throw new Error("创建失败");
-                const raw = await res.json();
-                const convData = normalizeApiResponse(raw);
-                const conv = (convData && convData.conversation) ? convData.conversation : raw.conversation || raw;
-                await loadConversations();
-                if (conv && conv.id) {
-                    selectConversation(conv.id);
-                }
-            } catch(e) {
-                console.error("创建对话失败:", e);
-                alert("创建对话失败: " + e.message);
-            }
-
+            await createNewConversation();
         });
     }
 
@@ -1701,55 +2213,8 @@ function setupEventListeners() {
         });
     }
 
-    // Provider form submission
-    if (providerFormEl) {
-        providerFormEl.addEventListener("submit", async (e) => {
-            e.preventDefault();
-            const id = document.getElementById("provider-id").value;
-            const name = document.getElementById("provider-name").value;
-            const providerApiBase = document.getElementById("provider-api-base").value;
-            const providerApiKey = document.getElementById("provider-api-key").value;
-            const defaultModel = document.getElementById("provider-default-model").value;
-            const isDefault = document.getElementById("provider-is-default").checked;
-            
-            const modelsData = getModelInputValues();
-            
-            const formData = new FormData();
-            formData.append("name", name);
-            formData.append("api_base", providerApiBase);
-            if (providerApiKey) formData.append("api_key", providerApiKey);
-            formData.append("default_model", defaultModel);
-            formData.append("is_default", isDefault ? "true" : "false");
-            formData.append("models", JSON.stringify(modelsData));
-            
-            try {
-                const url = id ? `${apiBase}/providers/${id}` : `${apiBase}/providers`;
-                const method = id ? "PUT" : "POST";
-                const res = await fetch(url, { method, body: formData });
-                if (!res.ok) throw new Error(await res.text());
-                
-                await loadProviders();
-                providerFormEl.reset();
-                document.getElementById("provider-id").value = "";
-                alert(id ? "Provider更新成功" : "Provider创建成功");
-            } catch (e) {
-                alert("保存失败: " + e.message);
-            }
-        });
-    }
-
-    // Provider form reset
-    const providerFormResetBtn = document.getElementById("provider-form-reset");
-    if (providerFormResetBtn) {
-        providerFormResetBtn.addEventListener("click", () => {
-            if (providerFormEl) {
-                providerFormEl.reset();
-                document.getElementById("provider-id").value = "";
-                // Reset model inputs to default state
-                setModelInputValues([]);
-            }
-        });
-    }
+    // Provider form submission - 已在 initProviderForms 中处理，这里跳过
+    // Provider form reset - 已在 initProviderForms 中处理，这里跳过
     
     // 模型和Provider选择器自动保存
     if (modelSelectEl) {
@@ -1797,34 +2262,310 @@ function setupEventListeners() {
             }
         });
     }
+    
+    // MCP 弹出选择框
+    initMcpTogglePopup();
+    
+    // 生图弹出选择框
+    initImageGenTogglePopup();
 }
+
+// 初始化 MCP 弹出选择框
+function initMcpTogglePopup() {
+    const wrapper = document.getElementById('mcp-toggle-wrapper');
+    const checkbox = document.getElementById('toggle-mcp');
+    const popup = document.getElementById('mcp-popup');
+    
+    console.log('[MCP] 初始化弹窗:', { wrapper: !!wrapper, checkbox: !!checkbox, popup: !!popup });
+    
+    if (!wrapper || !checkbox || !popup) {
+        console.warn('[MCP] 弹窗元素未找到');
+        return;
+    }
+    
+    const label = wrapper.querySelector('label');
+    if (!label) {
+        console.warn('[MCP] label 元素未找到');
+        return;
+    }
+    
+    // 点击 label 时直接弹出选择框
+    label.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        console.log('[MCP] label 被点击');
+        
+        // 关闭其他弹窗
+        document.querySelectorAll('.toggle-with-popup.open').forEach(el => {
+            if (el !== wrapper) el.classList.remove('open');
+        });
+        
+        const isOpen = wrapper.classList.contains('open');
+        
+        if (isOpen) {
+            wrapper.classList.remove('open');
+        } else {
+            wrapper.classList.add('open');
+            updateTogglePopupPosition(wrapper, popup);
+            updateMcpPopupOptions();
+        }
+    });
+}
+
+// 更新弹出框位置
+function updateTogglePopupPosition(wrapper, popup) {
+    const label = wrapper.querySelector('label');
+    if (!label) return;
+    
+    const rect = label.getBoundingClientRect();
+    const popupWidth = popup.offsetWidth || 200;
+    
+    // 计算居中位置
+    let left = rect.left + (rect.width / 2) - (popupWidth / 2);
+    
+    // 确保不超出屏幕左边
+    if (left < 10) left = 10;
+    // 确保不超出屏幕右边
+    if (left + popupWidth > window.innerWidth - 10) {
+        left = window.innerWidth - popupWidth - 10;
+    }
+    
+    popup.style.left = left + 'px';
+    popup.style.bottom = (window.innerHeight - rect.top + 8) + 'px';
+}
+
+// 更新 MCP 弹出框选项
+function updateMcpPopupOptions() {
+    const optionsContainer = document.getElementById('mcp-options');
+    const toggleMcp = document.getElementById('toggle-mcp');
+    if (!optionsContainer) return;
+    
+    optionsContainer.innerHTML = '';
+    
+    // 过滤启用的 MCP 服务器
+    const enabledServers = mcpServers.filter(s => s.is_enabled);
+    
+    if (enabledServers.length === 0) {
+        optionsContainer.innerHTML = '<div class="toggle-popup-empty">暂无可用的 MCP 服务</div>';
+        // 没有可用服务时，关闭按钮
+        if (toggleMcp) toggleMcp.checked = false;
+        return;
+    }
+    
+    enabledServers.forEach(server => {
+        const option = document.createElement('label');
+        option.className = 'toggle-popup-option';
+        option.innerHTML = `
+            <input type="checkbox" value="${server.id}" ${server.selected ? 'checked' : ''}>
+            <span>${server.name}</span>
+        `;
+        
+        const checkbox = option.querySelector('input');
+        checkbox.addEventListener('change', () => {
+            // 更新服务器选中状态
+            server.selected = checkbox.checked;
+            
+            // 根据是否有任何选中项来更新主 toggle 状态
+            updateMcpToggleState();
+            
+            // 保存工具设置
+            saveToolSettings();
+        });
+        
+        optionsContainer.appendChild(option);
+    });
+    
+    // 初始化时同步主 toggle 状态
+    updateMcpToggleState();
+}
+
+// 更新 MCP 主按钮状态（根据是否有选中的服务）
+function updateMcpToggleState() {
+    const toggleMcp = document.getElementById('toggle-mcp');
+    if (!toggleMcp) return;
+    
+    const enabledServers = mcpServers.filter(s => s.is_enabled);
+    const anySelected = enabledServers.some(s => s.selected);
+    toggleMcp.checked = anySelected;
+}
+
+// ========== 生图功能 ==========
+
+// 初始化生图弹出选择框
+function initImageGenTogglePopup() {
+    const wrapper = document.getElementById('image-gen-toggle-wrapper');
+    const checkbox = document.getElementById('toggle-image-gen');
+    const popup = document.getElementById('image-gen-popup');
+    
+    console.log('[ImageGen] 初始化弹窗:', { wrapper: !!wrapper, checkbox: !!checkbox, popup: !!popup });
+    
+    if (!wrapper || !checkbox || !popup) {
+        console.warn('[ImageGen] 弹窗元素未找到');
+        return;
+    }
+    
+    const label = wrapper.querySelector('label');
+    if (!label) {
+        console.warn('[ImageGen] label 元素未找到');
+        return;
+    }
+    
+    // 点击 label 时弹出选择框
+    label.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        console.log('[ImageGen] label 被点击');
+        
+        // 关闭其他弹窗
+        document.querySelectorAll('.toggle-with-popup.open').forEach(el => {
+            if (el !== wrapper) el.classList.remove('open');
+        });
+        
+        const isOpen = wrapper.classList.contains('open');
+        
+        if (isOpen) {
+            wrapper.classList.remove('open');
+        } else {
+            wrapper.classList.add('open');
+            updateTogglePopupPosition(wrapper, popup);
+            loadImageGenModels();
+        }
+    });
+}
+
+// 加载生图模型列表
+async function loadImageGenModels() {
+    const select = document.getElementById('image-gen-model-select');
+    if (!select) return;
+    
+    try {
+        const res = await fetch(`${apiBase}/models/image-gen`);
+        if (!res.ok) return;
+        const data = await res.json();
+        
+        select.innerHTML = '';
+        
+        if (!data.models || data.models.length === 0) {
+            select.innerHTML = '<option value="">请先配置生图模型</option>';
+            return;
+        }
+        
+        data.models.forEach(m => {
+            const opt = document.createElement('option');
+            opt.value = JSON.stringify({ model: m.model, provider_id: m.provider_id });
+            opt.textContent = m.custom_name || m.model;
+            if (m.provider_name) {
+                opt.textContent += ` (${m.provider_name})`;
+            }
+            select.appendChild(opt);
+        });
+    } catch (e) {
+        console.error('加载生图模型失败:', e);
+    }
+}
+
+// 发送生图请求
+async function sendImageGenRequest(prompt) {
+    const modelSelect = document.getElementById('image-gen-model-select');
+    const sizeSelect = document.getElementById('image-gen-size-select');
+    
+    if (!modelSelect || !modelSelect.value) {
+        alert('请先选择生图模型');
+        return null;
+    }
+    
+    let modelInfo;
+    try {
+        modelInfo = JSON.parse(modelSelect.value);
+    } catch (e) {
+        alert('生图模型配置错误');
+        return null;
+    }
+    
+    const size = sizeSelect?.value || '1024x1024';
+    
+    // 显示生成中的消息
+    appendMessage('user', `[生图] ${prompt}`);
+    const assistantEl = appendMessage('assistant', '🎨 正在生成图片，请稍候...', null, false);
+    
+    try {
+        const formData = new FormData();
+        formData.append('prompt', prompt);
+        formData.append('model', modelInfo.model);
+        formData.append('size', size);
+        formData.append('n', '1');
+        formData.append('provider_id', modelInfo.provider_id);
+        if (currentConversationId) {
+            formData.append('conversation_id', currentConversationId);
+        }
+        
+        const res = await fetch(`${apiBase}/images/generate`, {
+            method: 'POST',
+            body: formData
+        });
+        
+        const result = await res.json();
+        
+        if (result.success && result.images && result.images.length > 0) {
+            // 构建图片显示内容
+            let content = `**生成完成** (模型: ${modelInfo.model}, 尺寸: ${size})\n\n`;
+            result.images.forEach((img, i) => {
+                if (img.url) {
+                    content += `![生成的图片 ${i + 1}](${img.url})\n\n`;
+                } else if (img.b64_json) {
+                    content += `![生成的图片 ${i + 1}](data:image/png;base64,${img.b64_json})\n\n`;
+                }
+            });
+            
+            // 更新消息内容
+            const contentEl = assistantEl?.querySelector('.message-content');
+            if (contentEl) {
+                renderMarkdown(contentEl, content, true);
+            }
+            
+            // 添加底部操作栏
+            addMessageFooter(assistantEl, content, null);
+            
+            return result;
+        } else {
+            const errorMsg = result.error || '生成失败，请重试';
+            const contentEl = assistantEl?.querySelector('.message-content');
+            if (contentEl) {
+                contentEl.innerHTML = `<span style="color: red;">❌ ${errorMsg}</span>`;
+            }
+            return null;
+        }
+    } catch (e) {
+        console.error('生图请求失败:', e);
+        const contentEl = assistantEl?.querySelector('.message-content');
+        if (contentEl) {
+            contentEl.innerHTML = `<span style="color: red;">❌ 请求失败: ${e.message}</span>`;
+        }
+        return null;
+    }
+}
+
+// 全局点击关闭弹出框
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.toggle-with-popup')) {
+        document.querySelectorAll('.toggle-with-popup.open').forEach(el => {
+            el.classList.remove('open');
+        });
+    }
+});
 
 // 设置事件监听器
 function setupSettingsEventListeners() {
-    // 设置自动保存 - 添加null检查
-    const fontSizeSelect = document.getElementById("font-size-select");
-    if (fontSizeSelect) {
-        fontSizeSelect.addEventListener("change", async (e) => {
-            const fontSize = e.target.value;
-            applySettings({font_size: fontSize});
-            currentSettings.font_size = fontSize;
-            await saveSettingItem("font_size", fontSize);
-        });
-    }
-    
-    // 间距风格选择器
-    const densitySelect = document.getElementById("density-select");
-    if (densitySelect) {
-        densitySelect.addEventListener("change", async (e) => {
-            const density = e.target.value;
-            // 将间距风格应用到聊天消息容器
-            const chatMessages = document.getElementById("chat-messages");
-            if (chatMessages) {
-                chatMessages.setAttribute('data-density', density);
-            }
-            applySettings({density: density});
-            currentSettings.density = density;
-            await saveSettingItem("density", density);
+    // 界面比例选择器
+    const layoutScaleSelect = document.getElementById("layout-scale-select");
+    if (layoutScaleSelect) {
+        layoutScaleSelect.addEventListener("change", async (e) => {
+            const layoutScale = e.target.value;
+            document.body.setAttribute('data-layout-scale', layoutScale);
+            currentSettings.layout_scale = layoutScale;
+            await saveSettingItem("layout_scale", layoutScale);
         });
     }
     
@@ -1834,6 +2575,16 @@ function setupSettingsEventListeners() {
             const autoTitleModel = e.target.value;
             currentSettings.auto_title_model = autoTitleModel;
             await saveSettingItem("auto_title_model", autoTitleModel);
+        });
+    }
+    
+    // OCR方法选择器
+    const ocrMethodSelect = document.getElementById("ocr-method-select");
+    if (ocrMethodSelect) {
+        ocrMethodSelect.addEventListener("change", async (e) => {
+            const ocrMethod = e.target.value;
+            currentSettings.ocr_method = ocrMethod;
+            await saveSettingItem("ocr_method", ocrMethod);
         });
     }
 }
@@ -1865,6 +2616,7 @@ async function init() {
         initDOMElements();
         
         setupInputAutoResize();
+        initCustomModelSelect();
         
         await loadSettings();
         await loadModels();
@@ -1876,12 +2628,18 @@ async function init() {
         await loadRerankModels();
         await loadMCPServers();
         
+        // 数据加载完成后再初始化自定义下拉框
+        initSettingsCustomSelects();
+        
         initModelInputs();
         initMCPInputs();
         loadToolSettings();
         setupToolSettingsListeners();
         setupEventListeners();
         setupSettingsEventListeners();
+        
+        // 自动选择或创建对话
+        await autoSelectOrCreateConversation();
     } catch (error) {
         console.error("初始化过程中出现错误:", error);
         // 即使出现错误，也要确保基本的事件监听器被设置
@@ -1898,6 +2656,41 @@ async function init() {
         // 显示用户友好的错误信息
         const errorMsg = `前端初始化出现问题: ${error.message}\n\n基本功能可能仍然可用，但某些高级功能可能无法正常工作。\n\n请检查浏览器控制台获取详细错误信息。`;
         alert(errorMsg);
+    }
+}
+
+// 自动选择或创建对话
+async function autoSelectOrCreateConversation() {
+    // 如果已有对话，选择最新的一个
+    if (conversations.length > 0) {
+        // 优先选择未置顶的最新对话，如果都是置顶的则选第一个
+        const unpinnedConversations = conversations.filter(c => !c.is_pinned);
+        const targetConversation = unpinnedConversations.length > 0 
+            ? unpinnedConversations[0] 
+            : conversations[0];
+        await selectConversation(targetConversation.id);
+    } else {
+        // 没有对话，创建一个新的
+        await createNewConversation();
+    }
+}
+
+// 创建新对话
+async function createNewConversation() {
+    try {
+        const formData = new FormData();
+        formData.append("title", "新对话");
+        const res = await fetch(`${apiBase}/conversations`, {method: "POST", body: formData});
+        if (!res.ok) throw new Error("创建失败");
+        const raw = await res.json();
+        const convData = normalizeApiResponse(raw);
+        const conv = (convData && convData.conversation) ? convData.conversation : raw.conversation || raw;
+        await loadConversations();
+        if (conv && conv.id) {
+            await selectConversation(conv.id);
+        }
+    } catch(e) {
+        console.error("创建对话失败:", e);
     }
 }
 
@@ -1927,11 +2720,19 @@ function createModelInputGroup(modelValue = "", nameValue = "", capabilities = {
             <label><input type="checkbox" class="cap-vision" ${capabilities.vision ? 'checked' : ''}> 视觉</label>
             <label><input type="checkbox" class="cap-reasoning" ${capabilities.reasoning ? 'checked' : ''}> 推理</label>
             <label><input type="checkbox" class="cap-chat" ${capabilities.chat ? 'checked' : ''}> 对话</label>
+            <label><input type="checkbox" class="cap-image-gen" ${capabilities.image_gen ? 'checked' : ''}> 生图</label>
         </div>
+        <button type="button" class="add-model-btn">+</button>
         <button type="button" class="remove-model-btn">×</button>
     `;
     
-    // 添加删除按钮事件
+    // 添加按钮事件 - 在当前组的下方添加新组
+    group.querySelector(".add-model-btn").addEventListener("click", () => {
+        const newGroup = createModelInputGroup();
+        group.parentNode.insertBefore(newGroup, group.nextSibling);
+    });
+    
+    // 删除按钮事件
     group.querySelector(".remove-model-btn").addEventListener("click", () => {
         group.remove();
     });
@@ -1946,16 +2747,17 @@ function initModelInputs() {
         return;
     }
     
-    const addBtn = container.querySelector(".add-model-btn");
-    if (!addBtn) {
-        console.warn("add-model-btn not found, skipping initModelInputs");
-        return;
+    // 为初始的模型输入组添加事件
+    const initialGroup = container.querySelector(".models-input-group");
+    if (initialGroup) {
+        const addBtn = initialGroup.querySelector(".add-model-btn");
+        if (addBtn) {
+            addBtn.addEventListener("click", () => {
+                const newGroup = createModelInputGroup();
+                initialGroup.parentNode.insertBefore(newGroup, initialGroup.nextSibling);
+            });
+        }
     }
-    
-    addBtn.addEventListener("click", () => {
-        const newGroup = createModelInputGroup();
-        container.insertBefore(newGroup, container.lastElementChild);
-    });
 }
 
 function getModelInputValues() {
@@ -1968,16 +2770,20 @@ function getModelInputValues() {
         const visionCap = group.querySelector(".cap-vision");
         const reasoningCap = group.querySelector(".cap-reasoning");
         const chatCap = group.querySelector(".cap-chat");
+        const imageGenCap = group.querySelector(".cap-image-gen");
         
         const modelValue = modelInput ? modelInput.value.trim() : "";
+        const customName = nameInput ? nameInput.value.trim() : "";
         if (modelValue) {
             values.push({
                 model: modelValue,
-                name: nameInput ? nameInput.value.trim() : "",
+                name: customName,
                 capabilities: {
                     vision: visionCap ? visionCap.checked : false,
                     reasoning: reasoningCap ? reasoningCap.checked : false,
-                    chat: chatCap ? chatCap.checked : false
+                    chat: chatCap ? chatCap.checked : false,
+                    image_gen: imageGenCap ? imageGenCap.checked : false,
+                    custom_name: customName
                 }
             });
         }
@@ -2005,12 +2811,14 @@ function setModelInputValues(modelsData) {
             const visionCap = firstGroup.querySelector(".cap-vision");
             const reasoningCap = firstGroup.querySelector(".cap-reasoning");
             const chatCap = firstGroup.querySelector(".cap-chat");
+            const imageGenCap = firstGroup.querySelector(".cap-image-gen");
             
             if (modelInput) modelInput.value = modelsData[0].model || "";
             if (nameInput) nameInput.value = modelsData[0].name || "";
             if (visionCap) visionCap.checked = modelsData[0].capabilities?.vision || false;
             if (reasoningCap) reasoningCap.checked = modelsData[0].capabilities?.reasoning || false;
             if (chatCap) chatCap.checked = modelsData[0].capabilities?.chat || false;
+            if (imageGenCap) imageGenCap.checked = modelsData[0].capabilities?.image_gen || false;
         }
         
         // 添加其余的输入组
@@ -2129,16 +2937,14 @@ function renderKnowledgeBaseList() {
     kbListEl.querySelectorAll(".delete-kb-btn").forEach(btn => {
         btn.addEventListener("click", async () => {
             const kbId = btn.getAttribute("data-id");
-            if (confirm("确定要删除这个知识库吗？")) {
-                try {
-                    const res = await fetch(`${apiBase}/knowledge/bases/${kbId}`, { method: "DELETE" });
-                    if (!res.ok) throw new Error("删除失败");
-                    await loadKnowledgeBases();
-                    renderKnowledgeBaseList();
-                    updateKnowledgeBaseSelect();
-                } catch (e) {
-                    alert("删除知识库失败: " + e.message);
-                }
+            try {
+                const res = await fetch(`${apiBase}/knowledge/bases/${kbId}`, { method: "DELETE" });
+                if (!res.ok) throw new Error("删除失败");
+                await loadKnowledgeBases();
+                renderKnowledgeBaseList();
+                updateKnowledgeBaseSelect();
+            } catch (e) {
+                console.error("删除知识库失败:", e);
             }
         });
     });
@@ -2155,6 +2961,7 @@ function updateKnowledgeBaseSelect() {
         opt.textContent = kb.name;
         kbSelectEl.appendChild(opt);
     });
+    refreshCustomSelect(kbSelectEl);
 }
 
 // 初始化知识库表单事件
@@ -2209,59 +3016,84 @@ function initKnowledgeBaseForms() {
                 return;
             }
             
-            if (!fileInput || !fileInput.files[0]) {
+            if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
                 alert("请选择要上传的文件");
                 return;
             }
             
-            const formData = new FormData();
-            formData.append("kb_id", kbId);
-            formData.append("file", fileInput.files[0]);
-            formData.append("extract_graph", extractGraph ? "true" : "false");
-            if (embeddingModel) formData.append("embedding_model", embeddingModel);
+            const files = Array.from(fileInput.files);
+            const totalFiles = files.length;
+            let successCount = 0;
+            let failCount = 0;
+            let totalChunks = 0;
+            let totalEntities = 0;
+            let totalRelations = 0;
             
             if (kbUploadStatusEl) {
-                kbUploadStatusEl.textContent = "上传中...";
+                kbUploadStatusEl.textContent = `上传中... (0/${totalFiles})`;
                 kbUploadStatusEl.style.display = "block";
             }
             
-            try {
-                const res = await fetch(`${apiBase}/knowledge/upload`, {
-                    method: "POST",
-                    body: formData
-                });
+            // 逐个上传文件
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                const formData = new FormData();
+                formData.append("kb_id", kbId);
+                formData.append("file", file);
+                formData.append("extract_graph", extractGraph ? "true" : "false");
+                if (embeddingModel) formData.append("embedding_model", embeddingModel);
                 
-                if (!res.ok) throw new Error(await res.text());
-                
-                const result = await res.json();
-                
-                // 显示上传结果
-                let statusMsg = "✅ 上传成功";
-                if (result.chunks_count > 0) {
-                    statusMsg += `，已创建 ${result.chunks_count} 个向量块`;
+                if (kbUploadStatusEl) {
+                    kbUploadStatusEl.textContent = `上传中... (${i + 1}/${totalFiles}) - ${file.name}`;
                 }
-                if (result.graph) {
-                    if (result.graph.entities_created > 0 || result.graph.relations_created > 0) {
-                        statusMsg += `，提取了 ${result.graph.entities_created} 个实体和 ${result.graph.relations_created} 个关系`;
+                
+                try {
+                    const res = await fetch(`${apiBase}/knowledge/upload`, {
+                        method: "POST",
+                        body: formData
+                    });
+                    
+                    if (!res.ok) throw new Error(await res.text());
+                    
+                    const result = await res.json();
+                    successCount++;
+                    
+                    if (result.chunks_count > 0) {
+                        totalChunks += result.chunks_count;
                     }
-                }
-                
-                if (kbUploadStatusEl) {
-                    kbUploadStatusEl.textContent = statusMsg;
-                }
-                kbUploadFormEl.reset();
-                
-                // 刷新知识图谱统计
-                loadKnowledgeGraphStats(kbId);
-                
-                setTimeout(() => {
-                    if (kbUploadStatusEl) kbUploadStatusEl.style.display = "none";
-                }, 5000);
-            } catch (e) {
-                if (kbUploadStatusEl) {
-                    kbUploadStatusEl.textContent = "❌ 上传失败: " + e.message;
+                    if (result.graph) {
+                        totalEntities += result.graph.entities_created || 0;
+                        totalRelations += result.graph.relations_created || 0;
+                    }
+                } catch (e) {
+                    failCount++;
+                    console.error(`上传文件 ${file.name} 失败:`, e);
                 }
             }
+            
+            // 显示最终结果
+            let statusMsg = `✅ 上传完成: ${successCount}/${totalFiles} 个文件成功`;
+            if (failCount > 0) {
+                statusMsg = `⚠️ 上传完成: ${successCount} 成功, ${failCount} 失败`;
+            }
+            if (totalChunks > 0) {
+                statusMsg += `，共创建 ${totalChunks} 个向量块`;
+            }
+            if (totalEntities > 0 || totalRelations > 0) {
+                statusMsg += `，提取了 ${totalEntities} 个实体和 ${totalRelations} 个关系`;
+            }
+            
+            if (kbUploadStatusEl) {
+                kbUploadStatusEl.textContent = statusMsg;
+            }
+            kbUploadFormEl.reset();
+            
+            // 刷新知识图谱统计
+            loadKnowledgeGraphStats(kbId);
+            
+            setTimeout(() => {
+                if (kbUploadStatusEl) kbUploadStatusEl.style.display = "none";
+            }, 5000);
         });
     }
 }
@@ -2298,6 +3130,7 @@ async function loadKnowledgeGraphStats(kbId) {
     } catch (e) {
         console.error("加载知识图谱统计失败:", e);
     }
+}
 
 // ========== MCP服务器管理功能 ==========
 
@@ -2374,15 +3207,13 @@ function renderMCPServerList() {
     mcpListEl.querySelectorAll(".delete-mcp-btn").forEach(btn => {
         btn.addEventListener("click", async () => {
             const serverId = btn.getAttribute("data-id");
-            if (confirm("确定要删除这个MCP服务器吗？")) {
-                try {
-                    const res = await fetch(`${apiBase}/mcp/servers/${serverId}`, { method: "DELETE" });
-                    if (!res.ok) throw new Error("删除失败");
-                    await loadMCPServers();
-                    renderMCPServerList();
-                } catch (e) {
-                    alert("删除MCP服务器失败: " + e.message);
-                }
+            try {
+                const res = await fetch(`${apiBase}/mcp/servers/${serverId}`, { method: "DELETE" });
+                if (!res.ok) throw new Error("删除失败");
+                await loadMCPServers();
+                renderMCPServerList();
+            } catch (e) {
+                console.error("删除MCP服务器失败:", e);
             }
         });
     });
@@ -2682,9 +3513,11 @@ function renderProviderList() {
         const item = document.createElement("div");
         item.className = "provider-item";
         const defaultIcon = provider.is_default ? "⭐" : "";
+        const keyStatus = provider.has_api_key ? "🔑" : "⚠️";
+        const keyTitle = provider.has_api_key ? "API Key已配置" : "API Key未配置";
         item.innerHTML = `
             <div class="provider-info">
-                <div class="provider-name">${defaultIcon}${provider.name}</div>
+                <div class="provider-name">${defaultIcon}${provider.name} <span title="${keyTitle}">${keyStatus}</span></div>
                 <div class="provider-desc">${provider.api_base}</div>
                 <div class="provider-models">${provider.default_model}</div>
             </div>
@@ -2711,16 +3544,22 @@ function renderProviderList() {
     providerListEl.querySelectorAll(".delete-provider-btn").forEach(btn => {
         btn.addEventListener("click", async () => {
             const providerId = btn.getAttribute("data-id");
-            if (confirm("确定要删除这个Provider吗？")) {
-                try {
-                    const res = await fetch(`${apiBase}/providers/${providerId}`, { method: "DELETE" });
-                    if (!res.ok) throw new Error("删除失败");
-                    await loadProviders();
-                    renderProviderList();
-                    renderProviderSelect();
-                } catch (e) {
-                    alert("删除Provider失败: " + e.message);
+            // 获取当前正在编辑的 provider id
+            const currentEditingId = document.getElementById("provider-id")?.value;
+            
+            try {
+                const res = await fetch(`${apiBase}/providers/${providerId}`, { method: "DELETE" });
+                if (!res.ok) throw new Error("删除失败");
+                await loadProviders();
+                renderProviderList();
+                renderProviderSelect();
+                
+                // 如果删除的是当前正在编辑的 provider，则清空表单
+                if (currentEditingId && currentEditingId == providerId) {
+                    resetProviderForm();
                 }
+            } catch (e) {
+                console.error("删除Provider失败:", e);
             }
         });
     });
@@ -2728,16 +3567,427 @@ function renderProviderList() {
 
 // 填充Provider表单
 function fillProviderForm(provider) {
-    document.getElementById("provider-id").value = provider.id;
-    document.getElementById("provider-name").value = provider.name;
-    document.getElementById("provider-api-base").value = provider.api_base;
-    document.getElementById("provider-api-key").value = ""; // 不显示已保存的密钥
-    document.getElementById("provider-default-model").value = provider.default_model;
-    document.getElementById("provider-is-default").checked = provider.is_default;
+    const idEl = document.getElementById("provider-id");
+    const nameEl = document.getElementById("provider-name");
+    const apiBaseEl = document.getElementById("provider-api-base");
+    const apiKeyEl = document.getElementById("provider-api-key");
+    const defaultModelEl = document.getElementById("provider-default-model");
+    const defaultModelNameEl = document.getElementById("provider-default-model-name");
     
-    // 填充模型列表
-    if (provider.models) {
-        const modelsList = provider.models.split(",").map(m => m.trim()).filter(m => m);
-        setModelInputValues(modelsList.map(m => ({ model: m, name: "", capabilities: {} })));
+    if (idEl) idEl.value = provider.id;
+    if (nameEl) nameEl.value = provider.name;
+    if (apiBaseEl) apiBaseEl.value = provider.api_base;
+    if (apiKeyEl) apiKeyEl.value = "";
+    if (defaultModelEl) defaultModelEl.value = provider.default_model;
+    
+    // 解析模型配置
+    let modelsConfig = {};
+    if (provider.models_config) {
+        try {
+            modelsConfig = JSON.parse(provider.models_config);
+        } catch (e) {}
+    }
+    
+    // 填充默认模型的功能和名称
+    const defaultCaps = modelsConfig[provider.default_model] || {};
+    if (defaultModelNameEl) defaultModelNameEl.value = defaultCaps.custom_name || "";
+    
+    const defaultVision = document.getElementById("default-cap-vision");
+    const defaultReasoning = document.getElementById("default-cap-reasoning");
+    const defaultChat = document.getElementById("default-cap-chat");
+    const defaultImageGen = document.getElementById("default-cap-image-gen");
+    if (defaultVision) defaultVision.checked = defaultCaps.vision || false;
+    if (defaultReasoning) defaultReasoning.checked = defaultCaps.reasoning || false;
+    if (defaultChat) defaultChat.checked = defaultCaps.chat !== false; // 默认勾选
+    if (defaultImageGen) defaultImageGen.checked = defaultCaps.image_gen || false;
+    
+    // 根据是否已有API Key显示不同的提示
+    const apiKeyHint = document.getElementById("api-key-hint");
+    
+    if (provider.has_api_key) {
+        if (apiKeyEl) apiKeyEl.placeholder = "已配置，留空保持不变";
+        if (apiKeyHint) apiKeyHint.style.display = "block";
+    } else {
+        if (apiKeyEl) apiKeyEl.placeholder = "输入 API Key（可选）";
+        if (apiKeyHint) apiKeyHint.style.display = "none";
+        if (apiKeyRequired) apiKeyRequired.style.display = "inline";
+    }
+    
+    // 清空并填充模型列表
+    const modelsContainer = document.getElementById("provider-models-container");
+    if (modelsContainer) {
+        modelsContainer.innerHTML = "";
+        
+        // 解析模型列表
+        if (provider.models) {
+            const modelsList = provider.models.split(",").map(m => m.trim()).filter(m => m);
+            modelsList.forEach(modelName => {
+                const caps = modelsConfig[modelName] || {};
+                addModelCard(modelsContainer, modelName, caps.custom_name || "", caps);
+            });
+        }
+    }
+    
+    // 更新表单标题
+    const formTitle = document.getElementById("provider-form-title");
+    if (formTitle) formTitle.textContent = "编辑 Provider";
+}
+
+// 添加模型卡片
+function addModelCard(container, modelName = "", customName = "", capabilities = {}) {
+    const card = document.createElement("div");
+    card.className = "model-config-card removable";
+    card.innerHTML = `
+        <div class="model-inputs">
+            <input type="text" class="model-input" placeholder="输入模型名称，如 gpt-4o" value="${modelName}">
+            <input type="text" class="model-name-input" placeholder="自定义名称（可选）" value="${customName}">
+        </div>
+        <div class="model-capabilities">
+            <label><input type="checkbox" class="cap-vision" ${capabilities.vision ? 'checked' : ''}> 视觉</label>
+            <label><input type="checkbox" class="cap-reasoning" ${capabilities.reasoning ? 'checked' : ''}> 推理</label>
+            <label><input type="checkbox" class="cap-chat" ${capabilities.chat ? 'checked' : ''}> 对话</label>
+            <label><input type="checkbox" class="cap-image-gen" ${capabilities.image_gen ? 'checked' : ''}> 生图</label>
+        </div>
+        <button type="button" class="remove-model-btn">×</button>
+    `;
+    
+    // 删除按钮事件
+    card.querySelector(".remove-model-btn").addEventListener("click", () => {
+        card.remove();
+    });
+    
+    container.appendChild(card);
+    return card;
+}
+
+// 收集模型列表数据
+function collectModelsData() {
+    const container = document.getElementById("provider-models-container");
+    if (!container) return { models: "", modelsConfig: {} };
+    
+    const cards = container.querySelectorAll(".model-config-card");
+    const models = [];
+    const modelsConfig = {};
+    
+    cards.forEach(card => {
+        const modelInput = card.querySelector(".model-input");
+        const nameInput = card.querySelector(".model-name-input");
+        const visionCap = card.querySelector(".cap-vision");
+        const reasoningCap = card.querySelector(".cap-reasoning");
+        const chatCap = card.querySelector(".cap-chat");
+        const imageGenCap = card.querySelector(".cap-image-gen");
+        
+        const modelName = modelInput ? modelInput.value.trim() : "";
+        if (modelName) {
+            models.push(modelName);
+            modelsConfig[modelName] = {
+                vision: visionCap ? visionCap.checked : false,
+                reasoning: reasoningCap ? reasoningCap.checked : false,
+                chat: chatCap ? chatCap.checked : false,
+                image_gen: imageGenCap ? imageGenCap.checked : false,
+                custom_name: nameInput ? nameInput.value.trim() : ""
+            };
+        }
+    });
+    
+    return { models: models.join(","), modelsConfig };
+}
+
+// 初始化Provider表单事件
+function initProviderForms() {
+    // 添加模型按钮
+    const addModelBtn = document.getElementById("add-model-btn");
+    if (addModelBtn) {
+        addModelBtn.addEventListener("click", () => {
+            const container = document.getElementById("provider-models-container");
+            if (container) {
+                addModelCard(container);
+            }
+        });
+    }
+    
+    if (providerFormEl) {
+        providerFormEl.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            
+            const id = document.getElementById("provider-id")?.value || "";
+            const name = document.getElementById("provider-name")?.value.trim() || "";
+            const providerApiBase = document.getElementById("provider-api-base")?.value.trim() || "";
+            const providerApiKey = document.getElementById("provider-api-key")?.value || "";
+            const defaultModel = document.getElementById("provider-default-model")?.value.trim() || "";
+            const defaultModelName = document.getElementById("provider-default-model-name")?.value.trim() || "";
+            
+            if (!name || !providerApiBase || !defaultModel) {
+                alert("请填写必填字段：名称、API Base URL、默认模型");
+                return;
+            }
+            
+            // 收集默认模型的功能信息
+            const defaultModelCaps = {
+                vision: document.getElementById("default-cap-vision")?.checked || false,
+                reasoning: document.getElementById("default-cap-reasoning")?.checked || false,
+                chat: document.getElementById("default-cap-chat")?.checked || false,
+                image_gen: document.getElementById("default-cap-image-gen")?.checked || false,
+                custom_name: defaultModelName
+            };
+            
+            // 收集模型列表
+            const { models, modelsConfig } = collectModelsData();
+            
+            // 将默认模型的配置也加入
+            modelsConfig[defaultModel] = defaultModelCaps;
+            
+            const formData = new FormData();
+            formData.append("name", name);
+            formData.append("api_base", providerApiBase);
+            if (providerApiKey) {
+                formData.append("api_key", providerApiKey);
+            }
+            formData.append("default_model", defaultModel);
+            formData.append("models_str", models);
+            formData.append("models_config", JSON.stringify(modelsConfig));
+            
+            try {
+                const url = id ? `${apiBase}/providers/${id}` : `${apiBase}/providers`;
+                const res = await fetch(url, { method: "POST", body: formData });
+                if (!res.ok) throw new Error(await res.text());
+                
+                await loadProviders();
+                await loadModels();
+                renderProviderList();
+                renderProviderSelect();
+                resetProviderForm();
+                alert(id ? "Provider更新成功" : "Provider创建成功");
+            } catch (e) {
+                alert("保存失败: " + e.message);
+            }
+        });
+    }
+    
+    // Provider表单重置按钮
+    const providerFormResetBtn = document.getElementById("provider-form-reset");
+    if (providerFormResetBtn) {
+        providerFormResetBtn.addEventListener("click", resetProviderForm);
     }
 }
+
+// 重置Provider表单
+function resetProviderForm() {
+    if (providerFormEl) {
+        providerFormEl.reset();
+    }
+    const idEl = document.getElementById("provider-id");
+    if (idEl) idEl.value = "";
+    
+    // 清空所有输入框
+    const nameEl = document.getElementById("provider-name");
+    const apiBaseEl = document.getElementById("provider-api-base");
+    const defaultModelEl = document.getElementById("provider-default-model");
+    const defaultModelNameEl = document.getElementById("provider-default-model-name");
+    
+    if (nameEl) nameEl.value = "";
+    if (apiBaseEl) apiBaseEl.value = "";
+    if (defaultModelEl) defaultModelEl.value = "";
+    if (defaultModelNameEl) defaultModelNameEl.value = "";
+    
+    // 重置API Key输入框的提示（新建状态）
+    resetApiKeyInput();
+    
+    // 清空模型列表
+    const modelsContainer = document.getElementById("provider-models-container");
+    if (modelsContainer) {
+        modelsContainer.innerHTML = "";
+    }
+    
+    // 重置默认模型功能勾选
+    const defaultVision = document.getElementById("default-cap-vision");
+    const defaultReasoning = document.getElementById("default-cap-reasoning");
+    const defaultChat = document.getElementById("default-cap-chat");
+    const defaultImageGen = document.getElementById("default-cap-image-gen");
+    if (defaultVision) defaultVision.checked = false;
+    if (defaultReasoning) defaultReasoning.checked = false;
+    if (defaultChat) defaultChat.checked = true; // 默认勾选对话
+    if (defaultImageGen) defaultImageGen.checked = false;
+    
+    // 重置表单标题
+    const formTitle = document.getElementById("provider-form-title");
+    if (formTitle) formTitle.textContent = "新建 Provider";
+}
+
+// 重置API Key输入框为新建状态
+function resetApiKeyInput() {
+    const apiKeyInput = document.getElementById("provider-api-key");
+    const apiKeyHint = document.getElementById("api-key-hint");
+    
+    if (apiKeyInput) {
+        apiKeyInput.placeholder = "输入 API Key（可选）";
+        apiKeyInput.value = "";
+    }
+    if (apiKeyHint) apiKeyHint.style.display = "none";
+}
+
+// 在页面加载时初始化Provider表单
+document.addEventListener("DOMContentLoaded", () => {
+    setTimeout(() => {
+        initProviderForms();
+        renderProviderList();
+    }, 600);
+});
+
+// ========== 首次启动检查 ==========
+async function checkFirstTimeSetup() {
+    try {
+        const response = await fetch("/providers");
+        const providers = await response.json();
+        
+        // 如果没有任何 Provider，直接弹出Provider配置弹窗
+        if (!providers || providers.length === 0) {
+            // 延迟一点打开弹窗，确保页面已完全加载
+            setTimeout(() => {
+                openModal("provider-modal");
+            }, 300);
+            return true;
+        }
+        return false;
+    } catch (error) {
+        console.error("检查首次启动失败:", error);
+        return false;
+    }
+}
+
+// 知识库页面复制命令按钮
+document.addEventListener("DOMContentLoaded", () => {
+    document.querySelectorAll(".copy-cmd-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const cmd = btn.dataset.cmd;
+            navigator.clipboard.writeText(cmd).then(() => {
+                const originalText = btn.textContent;
+                btn.textContent = "已复制";
+                setTimeout(() => { btn.textContent = originalText; }, 2000);
+            });
+        });
+    });
+});
+
+// 修改原有的 init 函数，添加首次启动检查
+const originalInitFunction = init;
+init = async function() {
+    // 先正常初始化
+    await originalInitFunction();
+    
+    // 然后检查是否首次启动（没有Provider时弹出配置弹窗）
+    await checkFirstTimeSetup();
+};
+
+
+// ========== 模型帮助弹出框 ==========
+const modelHelpData = {
+    embedding: {
+        title: "📊 支持的向量模型",
+        models: [
+            { name: "text-embedding-3-small", provider: "OpenAI" },
+            { name: "text-embedding-3-large", provider: "OpenAI" },
+            { name: "text-embedding-ada-002", provider: "OpenAI" },
+            { name: "embedding-3", provider: "智谱AI" },
+            { name: "embedding-2", provider: "智谱AI" },
+            { name: "text-embedding-v3", provider: "通义千问" },
+            { name: "text-embedding-v2", provider: "通义千问" },
+        ],
+        note: "向量模型用于将文本转换为数值向量，不同 Provider 支持的模型不同。请确保你的 Provider 支持所选模型。",
+        localNote: "🏠 <strong>本地方案</strong>：安装 <code>mcp-local-rag</code> 后可使用本地向量模型，无需 API Key，完全离线运行。安装命令：<code>npx mcp-local-rag</code>"
+    },
+    rerank: {
+        title: "🔄 支持的重排模型",
+        models: [
+            { name: "rerank-v3.5", provider: "Cohere" },
+            { name: "rerank-multilingual-v3.0", provider: "Cohere" },
+            { name: "rerank-english-v3.0", provider: "Cohere" },
+            { name: "bge-reranker-v2-m3", provider: "智谱AI" },
+            { name: "gte-rerank", provider: "通义千问" },
+        ],
+        note: "重排模型对检索结果进行重新排序，提高相关性。这是可选功能，不使用也能正常工作。"
+    },
+    vision: {
+        title: "👁️ 图片识别方案",
+        models: [
+            { name: "gpt-4o", provider: "OpenAI" },
+            { name: "gpt-4o-mini", provider: "OpenAI" },
+            { name: "gpt-4-vision-preview", provider: "OpenAI" },
+            { name: "glm-4v", provider: "智谱AI" },
+            { name: "qwen-vl-max", provider: "通义千问" },
+            { name: "qwen-vl-plus", provider: "通义千问" },
+        ],
+        note: "视觉模型用于识别扫描件/图片 PDF 中的文字。如果你的 PDF 是文字版（可选中文字），则不需要此功能。",
+        localNote: "🏠 <strong>本地方案</strong>：安装 Tesseract OCR 后可使用本地 OCR，无需 API Key，完全离线运行。<a href='https://github.com/UB-Mannheim/tesseract/wiki' target='_blank'>下载安装包</a>"
+    }
+};
+
+function showModelHelp(type, anchorElement) {
+    const popup = document.getElementById("model-help-popup");
+    const titleEl = document.getElementById("model-help-title");
+    const contentEl = document.getElementById("model-help-content");
+    
+    if (!popup || !modelHelpData[type]) return;
+    
+    const data = modelHelpData[type];
+    titleEl.textContent = data.title;
+    
+    let html = '<h4>可用模型列表：</h4><ul>';
+    data.models.forEach(m => {
+        html += `<li><span>${m.name}</span><span class="model-provider">${m.provider}</span></li>`;
+    });
+    html += '</ul>';
+    html += `<div class="help-note"><strong>💡 提示</strong>${data.note}</div>`;
+    
+    // 如果有本地方案提示，添加到末尾
+    if (data.localNote) {
+        html += `<div class="help-note local-note">${data.localNote}</div>`;
+    }
+    
+    contentEl.innerHTML = html;
+    
+    // 定位弹出框
+    const rect = anchorElement.getBoundingClientRect();
+    const modalBody = anchorElement.closest('.modal-body');
+    const modalRect = modalBody ? modalBody.getBoundingClientRect() : { left: 0, top: 0 };
+    
+    popup.style.display = "block";
+    popup.style.left = (rect.left - modalRect.left + 20) + "px";
+    popup.style.top = (rect.bottom - modalRect.top + 5) + "px";
+}
+
+function hideModelHelp() {
+    const popup = document.getElementById("model-help-popup");
+    if (popup) {
+        popup.style.display = "none";
+    }
+}
+
+// 初始化模型帮助事件
+document.addEventListener("DOMContentLoaded", () => {
+    // 帮助图标点击
+    document.querySelectorAll(".model-help-icon").forEach(icon => {
+        icon.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const type = icon.dataset.modelType;
+            showModelHelp(type, icon);
+        });
+    });
+    
+    // 关闭按钮
+    document.addEventListener("click", (e) => {
+        if (e.target.classList.contains("model-help-close")) {
+            hideModelHelp();
+        }
+    });
+    
+    // 点击其他地方关闭
+    document.addEventListener("click", (e) => {
+        const popup = document.getElementById("model-help-popup");
+        if (popup && popup.style.display === "block") {
+            if (!popup.contains(e.target) && !e.target.classList.contains("model-help-icon")) {
+                hideModelHelp();
+            }
+        }
+    });
+});
