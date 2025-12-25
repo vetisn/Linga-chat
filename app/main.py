@@ -430,6 +430,13 @@ def _configure_ai_provider_for_conversation(
     elif conversation.provider_id:
         provider = crud.get_provider(db, conversation.provider_id)
 
+    # 如果没有找到 provider，尝试使用第一个可用的 provider
+    if not provider:
+        all_providers = crud.list_providers(db)
+        if all_providers:
+            provider = all_providers[0]
+            print(f"[DEBUG] 会话未绑定Provider，使用第一个可用Provider: {provider.name}")
+
     if provider:
         print(f"[DEBUG] 使用Provider: {provider.name}, API Base: {provider.api_base}, Has Key: {bool(provider.api_key)}")
         ai_manager.set_provider(
@@ -439,6 +446,8 @@ def _configure_ai_provider_for_conversation(
         )
     else:
         # 使用全局默认
+        if not settings.AI_API_BASE:
+            raise HTTPException(status_code=400, detail="未配置任何 Provider，请先在设置中添加 Provider")
         print(f"[DEBUG] 使用全局默认, API Base: {settings.AI_API_BASE}, Has Key: {bool(settings.AI_API_KEY)}")
         ai_manager.set_provider(
             api_base=settings.AI_API_BASE,
@@ -1931,36 +1940,69 @@ def get_graph_context(
 
 @app.get("/knowledge/embedding-models")
 def get_embedding_models(db: Session = Depends(get_db)):
-    """获取可用的向量模型列表 - 基于用户配置的Provider"""
+    """获取可用的向量模型列表 - 基于用户配置的Provider，按Provider分组"""
+    import json
+    
     # 获取所有Provider
     providers = crud.list_providers(db)
     
-    # 收集所有Provider中的向量模型
-    embedding_models = set()
+    # 收集所有Provider中的向量模型，按Provider分组
+    embedding_models = []
+    all_models = set()
+    models_names = {}  # 自定义名称
     
     # 添加全局默认向量模型
-    embedding_models.update(settings.embedding_models)
+    for model in settings.embedding_models:
+        if model not in all_models:
+            embedding_models.append({
+                "model": model,
+                "provider_id": None,
+                "provider_name": "默认",
+                "custom_name": None
+            })
+            all_models.add(model)
     
-    # 从Provider中提取可能的向量模型
+    # 从Provider中提取向量模型
     for provider in providers:
         if provider.models:
+            # 解析模型配置获取自定义名称
+            config = {}
+            if provider.models_config:
+                try:
+                    config = json.loads(provider.models_config)
+                except:
+                    pass
+            
             provider_models = [m.strip() for m in provider.models.split(",") if m.strip()]
             # 过滤出向量模型（通常包含embedding关键字）
             for model in provider_models:
                 if "embedding" in model.lower() or "embed" in model.lower():
-                    embedding_models.add(model)
+                    custom_name = config.get(model, {}).get("custom_name") if config.get(model) else None
+                    embedding_models.append({
+                        "model": model,
+                        "provider_id": provider.id,
+                        "provider_name": provider.name,
+                        "custom_name": custom_name
+                    })
+                    if custom_name:
+                        models_names[model] = custom_name
+                    all_models.add(model)
     
     # 如果没有找到任何向量模型，返回空列表
     if not embedding_models:
         return {
             "default": None,
             "models": [],
+            "models_by_provider": [],
+            "models_names": {},
             "message": "当前Provider中未配置向量模型，请在Provider设置中添加向量模型"
         }
     
     return {
-        "default": settings.EMBEDDING_MODEL if settings.EMBEDDING_MODEL in embedding_models else list(embedding_models)[0],
-        "models": sorted(list(embedding_models)),
+        "default": settings.EMBEDDING_MODEL if settings.EMBEDDING_MODEL in all_models else embedding_models[0]["model"],
+        "models": sorted(list(all_models)),
+        "models_by_provider": embedding_models,
+        "models_names": models_names,
     }
 
 
@@ -1991,25 +2033,48 @@ def get_vision_models(db: Session = Depends(get_db)):
 
 @app.get("/models/rerank")
 def get_rerank_models(db: Session = Depends(get_db)):
-    """获取可用的重排模型列表"""
+    """获取可用的重排模型列表 - 按Provider分组"""
+    import json
+    
     # 获取所有Provider
     providers = crud.list_providers(db)
     
-    # 收集所有Provider中的重排模型
-    rerank_models = set()
+    # 收集所有Provider中的重排模型，按Provider分组
+    rerank_models = []
+    all_models = set()
+    models_names = {}  # 自定义名称
     
     # 从Provider中提取重排模型
     for provider in providers:
         if provider.models:
+            # 解析模型配置获取自定义名称
+            config = {}
+            if provider.models_config:
+                try:
+                    config = json.loads(provider.models_config)
+                except:
+                    pass
+            
             provider_models = [m.strip() for m in provider.models.split(",") if m.strip()]
             # 过滤出重排模型（通常包含rerank关键字）
             for model in provider_models:
                 if "rerank" in model.lower():
-                    rerank_models.add(model)
+                    custom_name = config.get(model, {}).get("custom_name") if config.get(model) else None
+                    rerank_models.append({
+                        "model": model,
+                        "provider_id": provider.id,
+                        "provider_name": provider.name,
+                        "custom_name": custom_name
+                    })
+                    if custom_name:
+                        models_names[model] = custom_name
+                    all_models.add(model)
     
     return {
-        "default": list(rerank_models)[0] if rerank_models else None,
-        "models": sorted(list(rerank_models)),
+        "default": rerank_models[0]["model"] if rerank_models else None,
+        "models": sorted(list(all_models)),
+        "models_by_provider": rerank_models,
+        "models_names": models_names,
     }
 
 

@@ -543,6 +543,22 @@ body {
     font-size: 13px;
 }
 
+.custom-select-group-header {
+    padding: 8px 12px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-top: 1px solid var(--border-color);
+    margin-top: 4px;
+}
+
+.custom-select-group-header:first-child {
+    border-top: none;
+    margin-top: 0;
+}
+
 .custom-select-option:hover {
     background: var(--primary-lighter);
 }

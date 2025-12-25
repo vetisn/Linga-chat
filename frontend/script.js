@@ -426,7 +426,7 @@ async function loadSettings() {
             availableModels = modelsData.models || [];
         }
         
-        // 更新自动命名模型选择器
+        // 更新自动命名模型选择器（按Provider分组）
         const autoTitleSelect = document.getElementById("auto-title-model-select");
         if (autoTitleSelect) {
             autoTitleSelect.innerHTML = "";
@@ -437,15 +437,28 @@ async function loadSettings() {
             currentOpt.textContent = "使用当前对话模型";
             autoTitleSelect.appendChild(currentOpt);
             
-            // 添加具体模型选项
-            if (availableModels.length > 0) {
-                availableModels.forEach(model => {
-                    const opt = document.createElement("option");
-                    opt.value = model;
-                    opt.textContent = model;
-                    autoTitleSelect.appendChild(opt);
-                });
-            }
+            // 按Provider分组添加模型
+            const modelsData = await fetch(`${apiBase}/models/all`).then(r => r.json());
+            const providers = modelsData.providers || [];
+            const modelsNamesMap = modelsData.models_names || {};
+            
+            providers.forEach(provider => {
+                if (provider.models && provider.models.length > 0) {
+                    const optgroup = document.createElement("optgroup");
+                    optgroup.label = provider.name;
+                    
+                    provider.models.forEach(model => {
+                        const opt = document.createElement("option");
+                        opt.value = model;
+                        // 优先使用自定义名称
+                        const displayName = modelsNamesMap[model] || model;
+                        opt.textContent = displayName;
+                        optgroup.appendChild(opt);
+                    });
+                    
+                    autoTitleSelect.appendChild(optgroup);
+                }
+            });
             
             autoTitleSelect.value = settings.auto_title_model || "current";
             refreshCustomSelect(autoTitleSelect);
@@ -483,6 +496,7 @@ function applySettings(settings) {
 // 数据加载函数
 let modelsCaps = {};  // 存储模型功能信息
 let modelsNames = {};  // 存储模型自定义显示名称
+let modelsProviders = [];  // 存储Provider信息用于分组显示
 
 async function loadModels() {
     try {
@@ -499,6 +513,7 @@ async function loadModels() {
         // 保存模型功能信息和自定义名称
         modelsCaps = data.models_caps || {};
         modelsNames = data.models_names || {};
+        modelsProviders = data.providers || [];
         
         // 更新隐藏的原生 select（用于表单提交等）
         modelSelectEl.innerHTML = "";
@@ -512,7 +527,7 @@ async function loadModels() {
         });
         if(data.default) modelSelectEl.value = data.default;
         
-        // 更新自定义下拉组件
+        // 更新自定义下拉组件（按Provider分组）
         updateCustomModelSelect(models, data.default);
         
         // 更新模型功能标识（显示在选择框外）
@@ -524,7 +539,7 @@ async function loadModels() {
     } catch(e) { console.error(e); }
 }
 
-// 更新自定义模型下拉组件
+// 更新自定义模型下拉组件（按Provider分组）
 function updateCustomModelSelect(models, defaultModel) {
     const dropdown = document.getElementById("model-select-dropdown");
     const trigger = document.getElementById("model-select-trigger");
@@ -539,36 +554,82 @@ function updateCustomModelSelect(models, defaultModel) {
         return;
     }
     
-    models.forEach(m => {
-        const displayName = modelsNames[m] || m;
-        const caps = modelsCaps[m] || {};
-        
-        const optionEl = document.createElement("div");
-        optionEl.className = "custom-select-option";
-        optionEl.dataset.value = m;
-        
-        // 模型名称（左对齐）
-        const nameEl = document.createElement("span");
-        nameEl.className = "option-name";
-        nameEl.textContent = displayName + (m === defaultModel ? " (默认)" : "");
-        optionEl.appendChild(nameEl);
-        
-        // 功能图标（右对齐）
-        const capsEl = document.createElement("span");
-        capsEl.className = "option-caps";
-        if (caps.vision) capsEl.innerHTML += '<span title="视觉">👁</span>';
-        if (caps.reasoning) capsEl.innerHTML += '<span title="推理">🧠</span>';
-        if (caps.chat) capsEl.innerHTML += '<span title="对话">💬</span>';
-        if (caps.image_gen) capsEl.innerHTML += '<span title="生图">🎨</span>';
-        optionEl.appendChild(capsEl);
-        
-        // 点击选择
-        optionEl.addEventListener("click", () => {
-            selectModelOption(m, displayName + (m === defaultModel ? " (默认)" : ""));
+    // 按Provider分组显示
+    if (modelsProviders && modelsProviders.length > 0) {
+        modelsProviders.forEach(provider => {
+            if (!provider.models || provider.models.length === 0) return;
+            
+            // 创建分组标题
+            const groupHeader = document.createElement("div");
+            groupHeader.className = "custom-select-group-header";
+            groupHeader.textContent = provider.name;
+            dropdown.appendChild(groupHeader);
+            
+            // 添加该Provider下的模型
+            provider.models.forEach(m => {
+                const displayName = modelsNames[m] || m;
+                const caps = modelsCaps[m] || {};
+                
+                const optionEl = document.createElement("div");
+                optionEl.className = "custom-select-option";
+                optionEl.dataset.value = m;
+                
+                // 模型名称（左对齐）
+                const nameEl = document.createElement("span");
+                nameEl.className = "option-name";
+                nameEl.textContent = displayName + (m === defaultModel ? " (默认)" : "");
+                optionEl.appendChild(nameEl);
+                
+                // 功能图标（右对齐）
+                const capsEl = document.createElement("span");
+                capsEl.className = "option-caps";
+                if (caps.vision) capsEl.innerHTML += '<span title="视觉">👁</span>';
+                if (caps.reasoning) capsEl.innerHTML += '<span title="推理">🧠</span>';
+                if (caps.chat) capsEl.innerHTML += '<span title="对话">💬</span>';
+                if (caps.image_gen) capsEl.innerHTML += '<span title="生图">🎨</span>';
+                optionEl.appendChild(capsEl);
+                
+                // 点击选择
+                optionEl.addEventListener("click", () => {
+                    selectModelOption(m, displayName + (m === defaultModel ? " (默认)" : ""));
+                });
+                
+                dropdown.appendChild(optionEl);
+            });
         });
-        
-        dropdown.appendChild(optionEl);
-    });
+    } else {
+        // 没有Provider信息时，直接显示所有模型
+        models.forEach(m => {
+            const displayName = modelsNames[m] || m;
+            const caps = modelsCaps[m] || {};
+            
+            const optionEl = document.createElement("div");
+            optionEl.className = "custom-select-option";
+            optionEl.dataset.value = m;
+            
+            // 模型名称（左对齐）
+            const nameEl = document.createElement("span");
+            nameEl.className = "option-name";
+            nameEl.textContent = displayName + (m === defaultModel ? " (默认)" : "");
+            optionEl.appendChild(nameEl);
+            
+            // 功能图标（右对齐）
+            const capsEl = document.createElement("span");
+            capsEl.className = "option-caps";
+            if (caps.vision) capsEl.innerHTML += '<span title="视觉">👁</span>';
+            if (caps.reasoning) capsEl.innerHTML += '<span title="推理">🧠</span>';
+            if (caps.chat) capsEl.innerHTML += '<span title="对话">💬</span>';
+            if (caps.image_gen) capsEl.innerHTML += '<span title="生图">🎨</span>';
+            optionEl.appendChild(capsEl);
+            
+            // 点击选择
+            optionEl.addEventListener("click", () => {
+                selectModelOption(m, displayName + (m === defaultModel ? " (默认)" : ""));
+            });
+            
+            dropdown.appendChild(optionEl);
+        });
+    }
     
     // 设置当前选中值
     const currentValue = modelSelectEl?.value || defaultModel;
@@ -787,18 +848,49 @@ async function loadEmbeddingModels() {
         // 有向量模型时隐藏推荐
         if (localRagInfo) localRagInfo.style.display = "none";
         
-        // 添加 API 模型选项组
-        const models = data.models || [];
-        if (models.length > 0) {
-            const optgroup = document.createElement("optgroup");
-            optgroup.label = "API 向量模型";
-            models.forEach(m => {
-                const opt = document.createElement("option");
-                opt.value = m;
-                opt.textContent = m === data.default ? `${m} (默认)` : m;
-                optgroup.appendChild(opt);
+        // 按Provider分组添加模型
+        const modelsByProvider = data.models_by_provider || [];
+        const modelsNamesMap = data.models_names || {};
+        
+        if (modelsByProvider.length > 0) {
+            // 按Provider分组
+            const providerGroups = {};
+            modelsByProvider.forEach(item => {
+                const providerName = item.provider_name || "其他";
+                if (!providerGroups[providerName]) {
+                    providerGroups[providerName] = [];
+                }
+                providerGroups[providerName].push(item);
             });
-            embeddingModelSelectEl.appendChild(optgroup);
+            
+            // 为每个Provider创建optgroup
+            Object.entries(providerGroups).forEach(([providerName, items]) => {
+                const optgroup = document.createElement("optgroup");
+                optgroup.label = providerName;
+                items.forEach(item => {
+                    const opt = document.createElement("option");
+                    opt.value = item.model;
+                    const displayName = item.custom_name || modelsNamesMap[item.model] || item.model;
+                    opt.textContent = displayName + (item.model === data.default ? " (默认)" : "");
+                    optgroup.appendChild(opt);
+                });
+                embeddingModelSelectEl.appendChild(optgroup);
+            });
+        } else {
+            // 兼容旧格式：直接显示模型列表
+            const models = data.models || [];
+            if (models.length > 0) {
+                const optgroup = document.createElement("optgroup");
+                optgroup.label = "API 向量模型";
+                models.forEach(m => {
+                    const opt = document.createElement("option");
+                    opt.value = m;
+                    const displayName = modelsNamesMap[m] || m;
+                    opt.textContent = displayName + (m === data.default ? " (默认)" : "");
+                    optgroup.appendChild(opt);
+                });
+                embeddingModelSelectEl.appendChild(optgroup);
+            }
         }
         
         if(data.default) embeddingModelSelectEl.value = data.default;
@@ -924,11 +1016,41 @@ async function loadRerankModels() {
         const rerankModelSelect = document.getElementById("rerank-model-select");
         if (rerankModelSelect) {
             rerankModelSelect.innerHTML = '<option value="">不使用重排模型</option>';
-            if (data.models && data.models.length > 0) {
+            
+            const modelsByProvider = data.models_by_provider || [];
+            const modelsNamesMap = data.models_names || {};
+            
+            if (modelsByProvider.length > 0) {
+                // 按Provider分组
+                const providerGroups = {};
+                modelsByProvider.forEach(item => {
+                    const providerName = item.provider_name || "其他";
+                    if (!providerGroups[providerName]) {
+                        providerGroups[providerName] = [];
+                    }
+                    providerGroups[providerName].push(item);
+                });
+                
+                // 为每个Provider创建optgroup
+                Object.entries(providerGroups).forEach(([providerName, items]) => {
+                    const optgroup = document.createElement("optgroup");
+                    optgroup.label = providerName;
+                    items.forEach(item => {
+                        const opt = document.createElement("option");
+                        opt.value = item.model;
+                        const displayName = item.custom_name || modelsNamesMap[item.model] || item.model;
+                        opt.textContent = displayName;
+                        optgroup.appendChild(opt);
+                    });
+                    rerankModelSelect.appendChild(optgroup);
+                });
+            } else if (data.models && data.models.length > 0) {
+                // 兼容旧格式
                 data.models.forEach(m => {
                     const opt = document.createElement("option");
                     opt.value = m;
-                    opt.textContent = m;
+                    const displayName = modelsNamesMap[m] || m;
+                    opt.textContent = displayName;
                     rerankModelSelect.appendChild(opt);
                 });
             }
