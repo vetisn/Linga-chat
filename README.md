@@ -1,9 +1,13 @@
-# 灵枢 · Linga Chat
+<div align="center">
+
+# 🔮 灵枢 · Linga Chat
 
 一个轻量级的本地 AI 助手 Web 界面，支持多模型、知识库、MCP 工具、联网搜索等功能。
 
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
+
+</div>
 
 ## ✨ 功能特性
 
