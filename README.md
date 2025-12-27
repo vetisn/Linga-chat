@@ -34,11 +34,7 @@ pip install -r requirements.txt
 python start.py
 ```
 
-### 3. 访问界面
-
-打开浏览器访问 http://localhost:8000
-
-### 4. 配置 Provider
+### 3. 配置 Provider
 
 点击「设置」→「管理 Provider」，添加你的 AI 服务：
 
@@ -129,3 +125,4 @@ MIT License
 ---
 
 > 本项目大部分代码由 AI 辅助完成，仅供学习研究使用。
+
