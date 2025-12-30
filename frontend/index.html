@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -12,7 +12,7 @@
     <link rel="stylesheet" href="lib/katex.min.css">
     
     <!-- 引入外部CSS -->
-    <link rel="stylesheet" href="style.css?v=179">
+    <link rel="stylesheet" href="style.css?v=197">
     
     <!-- Markdown解析 -->
     <script src="lib/marked.min.js"></script>
@@ -27,15 +27,66 @@
     <script src="lib/katex.min.js"></script>
 </head>
 <body>
+<script>
+// 立即应用保存的主题设置，避免页面闪烁
+(function() {
+    try {
+        // 从localStorage读取缓存的设置
+        const cachedTheme = localStorage.getItem('linga_theme');
+        const cachedBubbleStyle = localStorage.getItem('linga_bubble_style');
+        const cachedShowAvatar = localStorage.getItem('linga_show_avatar');
+        
+        if (cachedTheme) {
+            document.body.setAttribute('data-theme', cachedTheme);
+        }
+        if (cachedBubbleStyle) {
+            document.body.setAttribute('data-bubble-style', cachedBubbleStyle);
+        }
+        // 默认显示头像
+        document.body.setAttribute('data-show-avatar', cachedShowAvatar !== 'false' ? 'true' : 'false');
+    } catch (e) {
+        console.warn('无法读取缓存的主题设置:', e);
+    }
+})();
+</script>
 
 <div class="app-container" id="app-container">
     <div class="sidebar">
         <div class="sidebar-header">
             <div class="app-title">🔮 灵枢</div>
-            <div class="sidebar-buttons">
-                <button id="new-conversation-btn">新对话</button>
-            </div>
         </div>
+        
+        <!-- 项目筛选器 + 新对话按钮 -->
+        <div class="project-filter-row">
+            <div class="project-filter" id="project-filter">
+                <div class="project-filter-trigger" id="project-filter-trigger">
+                    <span class="project-filter-icon">📋</span>
+                    <span class="project-filter-text">全部对话</span>
+                    <span class="project-filter-arrow">▼</span>
+                </div>
+                <div class="project-filter-dropdown" id="project-filter-dropdown">
+                    <div class="project-filter-option selected" data-project-id="">
+                        <span class="project-option-icon">📋</span>
+                        <span class="project-option-name">全部对话</span>
+                    </div>
+                    <div class="project-filter-option" data-project-id="uncategorized">
+                        <span class="project-option-icon">📄</span>
+                        <span class="project-option-name">未分类</span>
+                    </div>
+                    <div class="project-filter-divider"></div>
+                    <div class="project-filter-list" id="project-filter-list">
+                        <!-- 项目列表动态生成 -->
+                    </div>
+                    <div class="project-filter-divider"></div>
+                    <div class="project-filter-action" id="manage-projects-btn">
+                        <span class="project-action-icon">⚙️</span>
+                        <span>管理项目</span>
+                    </div>
+                </div>
+            </div>
+            <button class="new-chat-btn" id="new-conversation-btn" title="新对话">+</button>
+        </div>
+        
         <div class="current-chat-info" id="current-chat-info">
             <span class="current-chat-title" id="chat-title">请选择对话</span>
         </div>
@@ -147,7 +198,8 @@
                             </select>
                         </div>
                     </div>
-                    <select id="provider-select" class="custom-tooltip " data-tooltip="选择Provider">
+                    <!-- Provider选择框已隐藏，通过模型选择自动关联Provider -->
+                    <select id="provider-select" style="display:none;">
                         <option value="">未配置</option>
                     </select>
                 </div>
@@ -160,101 +212,456 @@
     </div>
 </div>
 
-<!-- 设置弹窗 -->
+<!-- 设置弹窗 - 左侧导航 + 右侧内容布局 -->
 <div class="modal settings-modal" id="settings-modal">
-    <div class="modal-content">
+    <div class="modal-content settings-layout">
         <div class="modal-header">
             <span class="modal-title">⚙️ 系统设置</span>
             <button class="modal-close" data-target="settings-modal">&times;</button>
         </div>
-        <div class="modal-body">
-            <div style="width: 100%;">
+        <div class="modal-body settings-body">
+            <!-- 左侧导航 -->
+            <div class="settings-nav">
+                <div class="settings-nav-item active" data-tab="provider">
+                    <span class="nav-icon">🔧</span>
+                    <span class="nav-text">Provider</span>
+                </div>
+                <div class="settings-nav-item" data-tab="appearance">
+                    <span class="nav-icon">🎨</span>
+                    <span class="nav-text">界面</span>
+                </div>
+                <div class="settings-nav-item" data-tab="ai">
+                    <span class="nav-icon">🤖</span>
+                    <span class="nav-text">AI</span>
+                </div>
+                <div class="settings-nav-item" data-tab="knowledge">
+                    <span class="nav-icon">📚</span>
+                    <span class="nav-text">知识库</span>
+                </div>
+                <div class="settings-nav-item" data-tab="mcp">
+                    <span class="nav-icon">🔌</span>
+                    <span class="nav-text">MCP</span>
+                </div>
+                <div class="settings-nav-item" data-tab="network">
+                    <span class="nav-icon">🌐</span>
+                    <span class="nav-text">联网</span>
+                </div>
+                <div class="settings-nav-item" data-tab="other">
+                    <span class="nav-icon">⚙️</span>
+                    <span class="nav-text">其他</span>
+                </div>
+            </div>
+            
+            <!-- 右侧内容区 -->
+            <div class="settings-content">
+                <!-- Provider 管理面板 - 放第一个 -->
+                <div class="settings-panel active" id="settings-panel-provider">
+                    <div class="provider-inline-container">
+                        <!-- 标签页导航 -->
+                        <div class="provider-tabs" id="provider-tabs-inline">
+                            <!-- 动态生成的Provider标签 -->
+                        </div>
+                        <!-- 标签页内容 -->
+                        <div class="provider-tab-content" id="provider-tab-content-inline">
+                            <div class="provider-empty-state" id="provider-empty-state-inline">
+                                <div class="empty-icon">📦</div>
+                                <div class="empty-text">暂无 Provider 配置</div>
+                                <div class="empty-hint">点击上方 "+" 按钮添加第一个 Provider</div>
+                            </div>
+                            <!-- Provider 详情表单 -->
+                            <form id="provider-form-inline" style="display: none;">
+                                <input type="hidden" id="provider-id-inline">
+                                <div class="provider-info-section">
+                                    <div class="provider-info-row">
+                                        <label>名称</label>
+                                        <input type="text" id="provider-name-inline" required placeholder="如 OpenAI / 智谱AI">
+                                    </div>
+                                    <div class="provider-info-row">
+                                        <label>API Base</label>
+                                        <input type="text" id="provider-api-base-inline" required placeholder="https://api.openai.com/v1">
+                                    </div>
+                                    <div class="provider-info-row">
+                                        <label>API Key</label>
+                                        <input type="password" id="provider-api-key-inline" placeholder="输入 API Key（可选）">
+                                    </div>
+                                </div>
+                                
+                                <!-- 模型列表 -->
+                                <div class="provider-models-section">
+                                    <div class="section-header">
+                                        <span class="section-title">模型列表</span>
+                                        <button type="button" id="add-model-btn-inline" class="add-model-tag-btn">+ 添加模型</button>
+                                    </div>
+                                    <div class="model-tags-grid" id="provider-models-grid-inline">
+                                        <!-- 动态生成的模型Tag -->
+                                    </div>
+                                </div>
+                                
+                                <!-- 底部操作栏 -->
+                                <div class="provider-form-footer">
+                                    <button type="button" id="provider-delete-btn-inline" class="btn-danger">删除 Provider</button>
+                                    <button type="submit" id="provider-submit-btn-inline" class="btn-primary">保存更改</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- 界面设置 -->
-                <div class="settings-section">
-                    <h4>🎨 界面设置</h4>
-                    <div class="settings-row">
-                        <label>界面比例</label>
-                        <select id="layout-scale-select">
-                            <option value="xs">极小</option>
-                            <option value="sm">较小</option>
-                            <option value="normal" selected>标准</option>
-                            <option value="lg">较大</option>
-                            <option value="xl">极大</option>
-                        </select>
+                <div class="settings-panel" id="settings-panel-appearance">
+                    <div class="settings-group">
+                        <div class="settings-row">
+                            <label>主题模式</label>
+                            <div class="theme-toggle-group">
+                                <button type="button" class="theme-btn active" data-theme="light">
+                                    <span>☀️</span> 浅色
+                                </button>
+                                <button type="button" class="theme-btn" data-theme="dark">
+                                    <span>🌙</span> 深色
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="settings-row">
+                            <label>界面比例</label>
+                            <select id="layout-scale-select">
+                                <option value="xs">极小</option>
+                                <option value="sm">较小</option>
+                                <option value="normal" selected>标准</option>
+                                <option value="lg">较大</option>
+                                <option value="xl">极大</option>
+                            </select>
+                        </div>
+                        
+                        <div class="settings-row">
+                            <label>显示头像</label>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="show-avatar-toggle">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        
+                        <div class="settings-row avatar-upload-row" id="avatar-upload-row" style="display: none;">
+                            <label>自定义头像</label>
+                            <div class="avatar-upload-group">
+                                <div class="avatar-preview" id="user-avatar-preview">
+                                    <span class="avatar-placeholder">👤</span>
+                                </div>
+                                <label class="avatar-upload-btn">
+                                    <input type="file" id="avatar-upload-input" accept="image/*" style="display: none;">
+                                    上传
+                                </label>
+                                <button type="button" class="avatar-reset-btn" id="avatar-reset-btn">重置</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 消息样式预览 -->
+                    <div class="bubble-preview-container">
+                        <div class="bubble-preview-title">样式预览</div>
+                        <div class="bubble-preview" id="bubble-preview">
+                            <div class="preview-message-wrapper preview-user-wrapper">
+                                <div class="preview-avatar preview-user-avatar">👤</div>
+                                <div class="preview-message preview-user">你好，这是用户消息</div>
+                            </div>
+                            <div class="preview-message-wrapper preview-assistant-wrapper">
+                                <div class="preview-avatar preview-assistant-avatar">🤖</div>
+                                <div class="preview-message preview-assistant">你好！这是AI回复消息，展示当前选择的样式效果。</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
                 <!-- AI设置 -->
-                <div class="settings-section">
-                    <h4>🤖 AI设置</h4>
-                    <div class="settings-row">
-                        <label>
-                            默认对话模型
-                            <span class="help-icon custom-tooltip" data-tooltip="新对话时默认使用的模型
+                <div class="settings-panel" id="settings-panel-ai">
+                    
+                    <div class="settings-group">
+                        <div class="settings-row">
+                            <label>
+                                默认对话模型
+                                <span class="help-icon custom-tooltip" data-tooltip="新对话时默认使用的模型
 选择'记忆上次选择'则自动使用上次选择的模型">?</span>
-                        </label>
-                        <select id="default-chat-model-select">
-                            <option value="remember_last">记忆上次选择</option>
-                            <option value="">使用 Provider 默认模型</option>
-                        </select>
-                    </div>
-                    <div class="settings-row">
-                        <label>
-                            自动命名模型
-                            <span class="help-icon custom-tooltip" data-tooltip="新对话发送第一条消息后，将使用此模型自动生成对话标题
+                            </label>
+                            <select id="default-chat-model-select">
+                                <option value="remember_last">记忆上次选择</option>
+                                <option value="">使用 Provider 默认模型</option>
+                            </select>
+                        </div>
+                        
+                        <div class="settings-row">
+                            <label>
+                                自动命名模型
+                                <span class="help-icon custom-tooltip" data-tooltip="新对话发送第一条消息后，将使用此模型自动生成对话标题
 选择'使用当前对话模型'则使用对话中选择的模型">?</span>
-                        </label>
-                        <select id="auto-title-model-select">
-                            <option value="current">使用当前对话模型</option>
-                        </select>
-                    </div>
-                    <div class="settings-row">
-                        <label>
-                            默认视觉模型
-                            <span class="help-icon custom-tooltip" data-tooltip="当对话模型不支持图片识别时，
+                            </label>
+                            <select id="auto-title-model-select">
+                                <option value="current">使用当前对话模型</option>
+                            </select>
+                        </div>
+                        
+                        <div class="settings-row">
+                            <label>
+                                默认视觉模型
+                                <span class="help-icon custom-tooltip" data-tooltip="当对话模型不支持图片识别时，
 将使用此模型解析图片内容，再将结果发送给对话模型处理">?</span>
-                        </label>
-                        <select id="default-vision-model-select">
-                            <option value="">不启用</option>
-                        </select>
+                            </label>
+                            <select id="default-vision-model-select">
+                                <option value="">不启用</option>
+                            </select>
+                        </div>
+                        
+                        <div class="settings-row">
+                            <label>
+                                上下文长度
+                                <span class="help-icon custom-tooltip" data-tooltip="发送请求时包含最近多少条消息
+数值越大，AI记忆越长，但消耗token越多">?</span>
+                            </label>
+                            <select id="context-length-select">
+                                <option value="5">5条消息</option>
+                                <option value="10">10条消息</option>
+                                <option value="20" selected>20条消息</option>
+                                <option value="50">50条消息</option>
+                                <option value="100">100条消息</option>
+                                <option value="0">全部消息</option>
+                            </select>
+                        </div>
+                        
+                        <div class="settings-row settings-row-vertical">
+                            <label>
+                                默认系统提示词
+                                <span class="help-icon custom-tooltip" data-tooltip="所有对话默认使用的系统提示词
+留空则不设置，项目级提示词会覆盖此设置">?</span>
+                                <span class="optional-badge">可选</span>
+                            </label>
+                            <textarea id="default-system-prompt" rows="3" placeholder="输入默认系统提示词（可选）"></textarea>
+                        </div>
                     </div>
                 </div>
 
                 <!-- 联网搜索设置 -->
-                <div class="settings-section">
-                    <h4>🌐 联网搜索设置</h4>
-                    <div class="settings-row">
-                        <label>配置搜索API密钥</label>
-                        <button type="button" id="manage-search-keys-btn">配置联网搜索</button>
+                <div class="settings-panel" id="settings-panel-network">
+                    
+                    <div class="settings-group">
+                        <div class="settings-row">
+                            <label>默认搜索源</label>
+                            <select id="search-default-source">
+                                <option value="duckduckgo" selected>DuckDuckGo（免费）</option>
+                                <option value="tavily">Tavily（需API Key）</option>
+                            </select>
+                        </div>
+                        
+                        <div class="settings-row">
+                            <label>Tavily API Key</label>
+                            <input type="password" id="search-tavily-api-key" placeholder="输入Tavily API Key">
+                            <small style="color: var(--text-muted); font-size: 12px; margin-top: 5px; display: block;">
+                                获取地址: <a href="https://tavily.com/" target="_blank">Tavily.com</a>（有免费额度）
+                            </small>
+                        </div>
+                        
+                        <div class="settings-row">
+                            <label>
+                                搜索结果数量
+                                <span class="help-icon custom-tooltip" data-tooltip="联网搜索时返回的结果数量
+数量越多信息越全面，但会增加处理时间">?</span>
+                            </label>
+                            <select id="search-results-count">
+                                <option value="3">3条结果</option>
+                                <option value="5" selected>5条结果</option>
+                                <option value="8">8条结果</option>
+                                <option value="10">10条结果</option>
+                            </select>
+                        </div>
+                        
+                        <div class="settings-row">
+                            <button type="button" id="save-search-config-btn" class="btn-primary">保存搜索配置</button>
+                        </div>
+                    </div>
+                    
+                    <div class="settings-tips">
+                        <div class="tip-item warning">⚠️ DuckDuckGo 需要能够访问国际互联网，如无法访问请使用 Tavily</div>
+                        <div class="tip-item success">💡 Tavily 提供免费额度，搜索结果质量更高，推荐使用</div>
                     </div>
                 </div>
 
-                <!-- 管理功能 -->
-                <div class="settings-section">
-                    <h4>🛠️ 系统管理</h4>
-                    <div class="settings-row">
-                        <label>模型提供商管理</label>
-                        <button type="button" id="manage-providers-btn">管理 Provider</button>
+
+
+                <!-- 知识库管理面板 -->
+                <div class="settings-panel" id="settings-panel-knowledge">
+                    <div class="knowledge-inline-container">
+                        <!-- 标签页导航 -->
+                        <div class="kb-tabs" id="kb-tabs-inline">
+                            <!-- 动态生成的知识库标签 -->
+                        </div>
+                        <!-- 标签页内容 -->
+                        <div class="kb-tab-content" id="kb-tab-content-inline">
+                            <div class="kb-empty-state" id="kb-empty-state-inline">
+                                <div class="empty-icon">📚</div>
+                                <div class="empty-text">暂无知识库</div>
+                                <div class="empty-hint">点击上方 "+" 按钮创建第一个知识库</div>
+                            </div>
+                            <!-- 知识库详情表单 -->
+                            <div id="kb-detail-inline" style="display: none;">
+                                <input type="hidden" id="kb-id-inline">
+                                <div class="kb-info-section">
+                                    <div class="kb-info-row">
+                                        <label>名称</label>
+                                        <input type="text" id="kb-name-inline" placeholder="知识库名称">
+                                    </div>
+                                    <div class="kb-info-row">
+                                        <label>描述</label>
+                                        <input type="text" id="kb-description-inline" placeholder="可选描述">
+                                    </div>
+                                </div>
+                                
+                                <!-- 文件列表 -->
+                                <div class="kb-files-section">
+                                    <div class="section-header">
+                                        <span class="section-title">文档列表</span>
+                                    </div>
+                                    <div class="kb-files-list" id="kb-files-inline">
+                                        <!-- 动态生成的文件列表 -->
+                                    </div>
+                                </div>
+                                
+                                <!-- 上传区域 -->
+                                <div class="kb-upload-section">
+                                    <div class="section-header">
+                                        <span class="section-title">上传文档</span>
+                                    </div>
+                                    <form id="kb-upload-form-inline">
+                                        <div class="kb-model-config">
+                                            <div class="kb-config-row">
+                                                <label>向量模型 <span class="required-badge">必选</span></label>
+                                                <select id="embedding-model-select-inline">
+                                                    <option value="">请选择向量模型</option>
+                                                </select>
+                                            </div>
+                                            <div class="kb-config-row">
+                                                <label>重排模型 <span class="optional-badge">可选</span></label>
+                                                <select id="rerank-model-select-inline">
+                                                    <option value="">不使用重排模型</option>
+                                                </select>
+                                            </div>
+                                            <div class="kb-config-row">
+                                                <label>图片识别 <span class="optional-badge">可选</span></label>
+                                                <select id="kb-vision-model-select-inline">
+                                                    <option value="">不启用</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="kb-upload-row">
+                                            <label class="kb-checkbox-label">
+                                                <input type="checkbox" id="kb-extract-images-inline"> 
+                                                提取文档内图片
+                                            </label>
+                                        </div>
+                                        <div class="kb-upload-row">
+                                            <input type="file" id="kb-file-inline" multiple accept=".pdf,.docx,.doc,.pptx,.xlsx,.xls,.txt,.md,.csv,.json,.xml,.html,.htm,.png,.jpg,.jpeg,.gif,.bmp,.webp">
+                                            <small>支持: PDF, Word, PPT, Excel, TXT, MD, CSV, JSON, XML, HTML, 图片</small>
+                                        </div>
+                                        <div class="kb-upload-actions">
+                                            <button type="submit" id="kb-upload-btn-inline" class="btn-primary-sm">上传并构建</button>
+                                        </div>
+                                    </form>
+                                    <div id="kb-upload-status-inline" class="status-text"></div>
+                                </div>
+                                
+                                <!-- 底部操作栏 -->
+                                <div class="kb-form-footer">
+                                    <button type="button" id="kb-delete-btn-inline" class="btn-danger">删除知识库</button>
+                                    <button type="button" id="kb-save-btn-inline" class="btn-primary">保存更改</button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                    <div class="settings-row">
-                        <label>知识库管理</label>
-                        <button type="button" id="manage-knowledge-btn">管理知识库</button>
+                </div>
+                <!-- MCP 管理面板 -->
+                <div class="settings-panel" id="settings-panel-mcp">
+                    
+                    <div class="mcp-inline-container">
+                        <!-- 折叠面板列表 -->
+                        <div class="mcp-accordion-list" id="mcp-accordion-list-inline">
+                            <!-- 动态生成的折叠面板 -->
+                        </div>
+                        
+                        <!-- 添加 MCP Server 表单（默认隐藏） -->
+                        <div class="mcp-add-form" id="mcp-add-form-inline" style="display: none;">
+                            <div class="mcp-form-header">
+                                <span class="mcp-form-title">添加 MCP Server</span>
+                                <button type="button" class="mcp-form-close" id="mcp-form-close-inline">×</button>
+                            </div>
+                            <form id="mcp-form-inline">
+                                <div class="mcp-form-row">
+                                    <label>名称</label>
+                                    <input type="text" id="mcp-name-inline" required placeholder="如 filesystem">
+                                </div>
+                                <div class="mcp-form-row">
+                                    <label>连接类型</label>
+                                    <select id="mcp-connection-type-inline">
+                                        <option value="stdio" selected>STDIO（本地命令）</option>
+                                        <option value="http">HTTP（远程服务）</option>
+                                    </select>
+                                </div>
+                                <div class="mcp-stdio-config-inline" id="mcp-stdio-config-inline">
+                                    <div class="mcp-form-row">
+                                        <label>命令</label>
+                                        <input type="text" id="mcp-command-inline" placeholder="如 npx, uvx, python">
+                                    </div>
+                                    <div class="mcp-form-row">
+                                        <label>参数</label>
+                                        <input type="text" id="mcp-args-inline" placeholder="如 -m mcp_server (多个用逗号分隔)">
+                                    </div>
+                                </div>
+                                <div class="mcp-http-config-inline" id="mcp-http-config-inline" style="display: none;">
+                                    <div class="mcp-form-row">
+                                        <label>URL</label>
+                                        <input type="text" id="mcp-url-inline" placeholder="http://localhost:8000">
+                                    </div>
+                                </div>
+                                <div class="mcp-form-row">
+                                    <label>描述</label>
+                                    <input type="text" id="mcp-description-inline" placeholder="可选描述">
+                                </div>
+                                <div class="mcp-form-actions">
+                                    <button type="button" class="btn-secondary" id="mcp-cancel-inline">取消</button>
+                                    <button type="submit" class="btn-primary">保存</button>
+                                </div>
+                            </form>
+                        </div>
+                        
+                        <!-- 添加按钮 -->
+                        <button type="button" id="mcp-add-btn-inline" class="mcp-add-btn">+ 添加 MCP Server</button>
                     </div>
-                    <div class="settings-row">
-                        <label>MCP服务器管理</label>
-                        <button type="button" id="manage-mcp-btn">管理 MCP</button>
+                </div>
+
+                <!-- 其他设置 -->
+                <div class="settings-panel" id="settings-panel-other">
+                    
+                    <div class="settings-group">
+                        <div class="settings-row">
+                            <label>导出调试日志</label>
+                            <div class="settings-row-actions">
+                                <select id="export-logs-hours" style="width: 100px;">
+                                    <option value="1">1小时</option>
+                                    <option value="6">6小时</option>
+                                    <option value="24" selected>24小时</option>
+                                    <option value="72">3天</option>
+                                    <option value="168">7天</option>
+                                </select>
+                                <button type="button" id="export-logs-btn">导出日志</button>
+                            </div>
+                        </div>
                     </div>
-                    <div class="settings-row">
-                        <label>导出调试日志</label>
-                        <div style="display: flex; gap: 8px; align-items: center;">
-                            <select id="export-logs-hours" style="width: 100px;">
-                                <option value="1">1小时</option>
-                                <option value="6">6小时</option>
-                                <option value="24" selected>24小时</option>
-                                <option value="72">3天</option>
-                                <option value="168">7天</option>
-                            </select>
-                            <button type="button" id="export-logs-btn">导出日志</button>
+                    
+                    <div class="settings-group settings-danger-zone">
+                        <div class="settings-group-title">危险操作</div>
+                        <div class="settings-row">
+                            <label>
+                                重置所有设置
+                                <span class="help-icon custom-tooltip" data-tooltip="将所有设置恢复为默认值
+此操作不会删除对话记录和知识库">?</span>
+                            </label>
+                            <button type="button" id="reset-settings-btn" class="btn-danger-outline">重置设置</button>
                         </div>
                     </div>
                 </div>
@@ -263,69 +670,98 @@
     </div>
 </div>
 
-<!-- Provider 管理弹窗 -->
+<!-- Provider 管理弹窗 - 标签页布局 -->
 <div class="modal" id="provider-modal">
     <div class="modal-content modal-wide">
         <div class="modal-header">
             <span class="modal-title">🔧 模型提供商管理</span>
             <button class="modal-close" data-target="provider-modal" data-return="settings-modal">&times;</button>
         </div>
-        <div class="modal-body">
-            <div class="provider-list-container">
-                <h3>已配置的 Provider</h3>
-                <div id="provider-list"></div>
+        <div class="modal-body provider-tabs-layout">
+            <!-- 标签页导航 -->
+            <div class="provider-tabs" id="provider-tabs">
+                <!-- 动态生成的Provider标签 -->
             </div>
-            <div class="provider-form-container">
-                <h3 id="provider-form-title">新建 Provider</h3>
-                <form id="provider-form">
+            <!-- 标签页内容 -->
+            <div class="provider-tab-content" id="provider-tab-content">
+                <div class="provider-empty-state" id="provider-empty-state">
+                    <div class="empty-icon">📦</div>
+                    <div class="empty-text">暂无 Provider 配置</div>
+                    <div class="empty-hint">点击上方 "+" 按钮添加第一个 Provider</div>
+                </div>
+                <!-- Provider 详情表单 -->
+                <form id="provider-form" style="display: none;">
                     <input type="hidden" id="provider-id">
-                    <div class="form-row">
-                        <label>名称 <span class="required">*</span></label>
-                        <input type="text" id="provider-name" required placeholder="如 OpenAI / 智谱AI">
-                    </div>
-                    <div class="form-row">
-                        <label>API Base URL <span class="required">*</span></label>
-                        <input type="text" id="provider-api-base" required placeholder="https://api.openai.com/v1">
-                    </div>
-                    <div class="form-row">
-                        <label>API Key</label>
-                        <input type="password" id="provider-api-key" placeholder="输入 API Key（可选）">
-                        <small id="api-key-hint" style="display:none;">留空则保持原密钥不变</small>
-                    </div>
-                    
-                    <!-- 默认模型配置 -->
-                    <div class="form-row">
-                        <label>默认模型 <span class="required">*</span></label>
-                        <div class="model-config-card default-model-card">
-                            <div class="model-inputs">
-                                <input type="text" id="provider-default-model" required placeholder="输入模型名称，如 gpt-4o">
-                                <input type="text" id="provider-default-model-name" placeholder="自定义名称（可选）">
-                            </div>
-                            <div class="model-capabilities">
-                                <label><input type="checkbox" id="default-cap-vision"> 视觉</label>
-                                <label><input type="checkbox" id="default-cap-reasoning"> 推理</label>
-                                <label><input type="checkbox" id="default-cap-chat" checked> 对话</label>
-                                <label><input type="checkbox" id="default-cap-image-gen"> 生图</label>
-                            </div>
+                    <div class="provider-info-section">
+                        <div class="provider-info-row">
+                            <label>名称</label>
+                            <input type="text" id="provider-name" required placeholder="如 OpenAI / 智谱AI">
+                        </div>
+                        <div class="provider-info-row">
+                            <label>API Base</label>
+                            <input type="text" id="provider-api-base" required placeholder="https://api.openai.com/v1">
+                        </div>
+                        <div class="provider-info-row">
+                            <label>API Key</label>
+                            <input type="password" id="provider-api-key" placeholder="输入 API Key（可选）">
                         </div>
                     </div>
                     
-                    <!-- 其他模型列表 -->
-                    <div class="form-row">
-                        <label>其他模型列表</label>
-                        <div id="provider-models-container" class="models-list-container">
-                            <!-- 动态添加的模型卡片 -->
+                    <!-- 模型列表 - 紧凑Tag网格 -->
+                    <div class="provider-models-section">
+                        <div class="section-header">
+                            <span class="section-title">模型列表</span>
+                            <button type="button" id="add-model-btn" class="add-model-tag-btn">+ 添加模型</button>
                         </div>
-                        <button type="button" id="add-model-btn" class="add-model-btn">+ 添加模型</button>
-                        <small>点击添加更多模型，可为每个模型标记功能</small>
+                        <div class="model-tags-grid" id="provider-models-grid">
+                            <!-- 动态生成的模型Tag -->
+                        </div>
                     </div>
                     
-                    <div class="form-actions">
-                        <button type="submit" id="provider-submit-btn">保存</button>
-                        <button type="button" id="provider-form-reset">取消</button>
+                    <!-- 底部操作栏 -->
+                    <div class="provider-form-footer">
+                        <button type="button" id="provider-delete-btn" class="btn-danger">删除 Provider</button>
+                        <button type="submit" id="provider-submit-btn" class="btn-primary">保存更改</button>
                     </div>
                 </form>
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- 模型编辑弹窗 -->
+<div class="model-edit-popup" id="model-edit-popup" style="display: none;">
+    <div class="model-edit-content">
+        <div class="model-edit-header">
+            <span id="model-edit-title">编辑模型</span>
+            <button type="button" class="model-edit-close" id="model-edit-close">&times;</button>
+        </div>
+        <div class="model-edit-body">
+            <input type="hidden" id="model-edit-index">
+            <div class="model-edit-row">
+                <label>模型ID <span class="required">*</span></label>
+                <input type="text" id="model-edit-id" placeholder="如 gpt-4o">
+            </div>
+            <div class="model-edit-row">
+                <label>显示名称</label>
+                <input type="text" id="model-edit-name" placeholder="自定义名称（可选）">
+            </div>
+            <div class="model-edit-row">
+                <label>功能标记</label>
+                <div class="model-edit-caps">
+                    <label><input type="checkbox" id="model-edit-cap-vision"> 👁️ 视觉</label>
+                    <label><input type="checkbox" id="model-edit-cap-reasoning"> 🧠 推理</label>
+                    <label><input type="checkbox" id="model-edit-cap-chat" checked> 💬 对话</label>
+                    <label><input type="checkbox" id="model-edit-cap-image-gen"> 🎨 生图</label>
+                </div>
+            </div>
+            <div class="model-edit-row">
+                <label><input type="checkbox" id="model-edit-is-default"> 设为默认模型</label>
+            </div>
+        </div>
+        <div class="model-edit-footer">
+            <button type="button" id="model-edit-delete" class="btn-danger-sm">删除</button>
+            <button type="button" id="model-edit-save" class="btn-primary-sm">确定</button>
         </div>
     </div>
 </div>
@@ -442,66 +878,77 @@
     </div>
 </div>
 
-<!-- MCP服务器管理弹窗 -->
+<!-- MCP服务器管理弹窗 - 折叠面板布局 -->
 <div class="modal" id="mcp-modal">
-    <div class="modal-content modal-wide">
+    <div class="modal-content mcp-accordion-modal">
         <div class="modal-header">
             <span class="modal-title">🔌 MCP Server 管理</span>
             <button class="modal-close" data-target="mcp-modal" data-return="settings-modal">&times;</button>
         </div>
-        <div class="modal-body">
-            <!-- 左侧：服务器列表 -->
-            <div class="mcp-list-container">
-                <h3>MCP Servers</h3>
-                <div id="mcp-list"></div>
-                <button type="button" id="mcp-add-btn" class="add-btn">+ 新建 MCP Server</button>
+        <div class="modal-body mcp-accordion-body">
+            <!-- 折叠面板列表 -->
+            <div class="mcp-accordion-list" id="mcp-accordion-list">
+                <!-- 动态生成的折叠面板 -->
             </div>
-            
-            <!-- 右侧：编辑表单 -->
-            <div class="mcp-form-container">
-                <h3 id="mcp-form-title">编辑 MCP Server</h3>
-                <form id="mcp-form">
-                    <input type="hidden" id="mcp-edit-name">
-                    <div class="form-row compact">
-                        <label>名称 <span class="required">*</span></label>
-                        <input type="text" id="mcp-name" required placeholder="如 office-mcp">
-                    </div>
-                    <div class="form-row compact">
-                        <label>类型 <span class="required">*</span></label>
-                        <div class="radio-group">
-                            <label><input type="radio" name="mcp-type" value="stdio" checked> 本地 (stdio)</label>
-                            <label><input type="radio" name="mcp-type" value="http"> 远程 (http/sse)</label>
-                        </div>
-                    </div>
-                    <div class="form-row compact" id="mcp-command-row">
-                        <label>命令 <span class="required">*</span></label>
-                        <input type="text" id="mcp-command" placeholder="如 C:/Users/xxx/uvx.exe">
-                    </div>
-                    <div class="form-row compact" id="mcp-args-row">
-                        <label>参数</label>
-                        <input type="text" id="mcp-args" placeholder="如 mcp-server-office">
-                    </div>
-                    <div class="form-row compact" id="mcp-url-row" style="display: none;">
-                        <label>URL <span class="required">*</span></label>
-                        <input type="text" id="mcp-url" placeholder="如 http://localhost:8080/sse">
-                    </div>
-                    <div class="form-row compact">
-                        <label>环境变量</label>
-                        <textarea id="mcp-env" rows="2" placeholder="KEY=VALUE 每行一个"></textarea>
-                    </div>
-                    <div class="form-actions-bottom compact">
-                        <div class="form-actions-left">
-                            <button type="button" id="mcp-delete-btn" class="btn-danger">删除</button>
-                            <span id="mcp-status" class="mcp-test-status"></span>
-                        </div>
-                        <div class="form-actions-right">
-                            <button type="button" id="mcp-test-btn" class="btn-secondary">测试</button>
-                            <button type="submit" class="btn-primary">保存</button>
-                        </div>
-                    </div>
-                </form>
-            </div>
+            <!-- 添加按钮 -->
+            <button type="button" id="mcp-add-btn" class="mcp-add-btn">+ 添加 MCP Server</button>
         </div>
+    </div>
+</div>
+
+<!-- MCP 编辑弹窗 -->
+<div class="mcp-edit-popup" id="mcp-edit-popup" style="display: none;">
+    <div class="mcp-edit-content">
+        <div class="mcp-edit-header">
+            <span id="mcp-edit-title">编辑 MCP Server</span>
+            <button type="button" class="mcp-edit-close" id="mcp-edit-close">&times;</button>
+        </div>
+        <form id="mcp-form">
+            <input type="hidden" id="mcp-edit-name">
+            <div class="mcp-edit-body">
+                <div class="mcp-edit-row">
+                    <label>名称 <span class="required">*</span></label>
+                    <input type="text" id="mcp-name" required placeholder="如 office-mcp">
+                </div>
+                <div class="mcp-edit-row">
+                    <label>类型</label>
+                    <div class="mcp-type-toggle">
+                        <label class="mcp-type-option">
+                            <input type="radio" name="mcp-type" value="stdio" checked>
+                            <span>本地 (stdio)</span>
+                        </label>
+                        <label class="mcp-type-option">
+                            <input type="radio" name="mcp-type" value="http">
+                            <span>远程 (http)</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="mcp-edit-row" id="mcp-command-row">
+                    <label>命令 <span class="required">*</span></label>
+                    <input type="text" id="mcp-command" placeholder="如 C:/Users/xxx/uvx.exe">
+                </div>
+                <div class="mcp-edit-row" id="mcp-args-row">
+                    <label>参数</label>
+                    <input type="text" id="mcp-args" placeholder="如 mcp-server-office">
+                </div>
+                <div class="mcp-edit-row" id="mcp-url-row" style="display: none;">
+                    <label>URL <span class="required">*</span></label>
+                    <input type="text" id="mcp-url" placeholder="如 http://localhost:8080/sse">
+                </div>
+                <div class="mcp-edit-row">
+                    <label>环境变量</label>
+                    <textarea id="mcp-env" rows="2" placeholder="KEY=VALUE 每行一个"></textarea>
+                </div>
+            </div>
+            <div class="mcp-edit-footer">
+                <div class="mcp-edit-left">
+                    <button type="button" id="mcp-delete-btn" class="btn-danger-sm">删除</button>
+                    <button type="button" id="mcp-test-btn" class="btn-secondary-sm">测试连接</button>
+                    <span id="mcp-status" class="mcp-test-status"></span>
+                </div>
+                <button type="submit" class="btn-primary-sm">保存</button>
+            </div>
+        </form>
     </div>
 </div>
 
@@ -520,7 +967,7 @@
                         
                         <div class="form-row">
                             <label>默认搜索源</label>
-                            <select id="search-default-source">
+                            <select id="search-default-source-modal">
                                 <option value="duckduckgo" selected>DuckDuckGo（免费）</option>
                                 <option value="tavily">Tavily（需API Key）</option>
                             </select>
@@ -528,7 +975,7 @@
                         
                         <div class="form-row">
                             <label>Tavily API Key（可选）</label>
-                            <input type="password" id="search-tavily-api-key" placeholder="输入Tavily API Key">
+                            <input type="password" id="search-tavily-api-key-modal" placeholder="输入Tavily API Key">
                             <small style="color: #666; font-size: 12px; margin-top: 5px; display: block;">
                                 获取地址: <a href="https://tavily.com/" target="_blank">Tavily.com</a>（有免费额度）
                             </small>
@@ -559,11 +1006,143 @@
     </div>
 </div>
 
+<!-- 项目管理弹窗 -->
+<div class="modal project-modal" id="project-modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <span class="modal-title">📁 项目管理</span>
+            <button class="modal-close" data-target="project-modal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="project-list-container">
+                <h3>我的项目</h3>
+                <div class="project-list" id="project-list"></div>
+                <button type="button" id="add-project-btn" class="add-btn" style="margin-top: 12px;">+ 新建项目</button>
+            </div>
+            <div class="project-form-container">
+                <h3 id="project-form-title">新建项目</h3>
+                <form id="project-form">
+                    <input type="hidden" id="project-edit-id">
+                    <div class="form-row">
+                        <label>项目名称 <span class="required">*</span></label>
+                        <input type="text" id="project-name-input" required placeholder="如：工作助手、学习笔记">
+                    </div>
+                    <div class="form-row">
+                        <label>项目描述</label>
+                        <input type="text" id="project-desc-input" placeholder="简短描述项目用途（可选）">
+                    </div>
+                    <div class="form-row">
+                        <label>项目图标</label>
+                        <div class="icon-selector" id="project-icon-selector">
+                            <span class="icon-option selected" data-icon="📁">📁</span>
+                            <span class="icon-option" data-icon="💼">💼</span>
+                            <span class="icon-option" data-icon="📚">📚</span>
+                            <span class="icon-option" data-icon="🎯">🎯</span>
+                            <span class="icon-option" data-icon="💡">💡</span>
+                            <span class="icon-option" data-icon="🔧">🔧</span>
+                            <span class="icon-option" data-icon="🎨">🎨</span>
+                            <span class="icon-option" data-icon="📝">📝</span>
+                            <span class="icon-option" data-icon="🏠">🏠</span>
+                            <span class="icon-option" data-icon="🎮">🎮</span>
+                            <span class="icon-option" data-icon="🎵">🎵</span>
+                            <span class="icon-option" data-icon="📷">📷</span>
+                            <span class="icon-option" data-icon="✈️">✈️</span>
+                            <span class="icon-option" data-icon="🍔">🍔</span>
+                            <span class="icon-option" data-icon="💰">💰</span>
+                            <span class="icon-option" data-icon="❤️">❤️</span>
+                            <span class="icon-option" data-icon="⭐">⭐</span>
+                            <span class="icon-option" data-icon="🔥">🔥</span>
+                            <span class="icon-option" data-icon="🌟">🌟</span>
+                            <span class="icon-option" data-icon="🚀">🚀</span>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <label>项目颜色</label>
+                        <div class="color-selector" id="project-color-selector">
+                            <span class="color-option selected" data-color="#6366f1" style="background: #6366f1;"></span>
+                            <span class="color-option" data-color="#8b5cf6" style="background: #8b5cf6;"></span>
+                            <span class="color-option" data-color="#ec4899" style="background: #ec4899;"></span>
+                            <span class="color-option" data-color="#ef4444" style="background: #ef4444;"></span>
+                            <span class="color-option" data-color="#f97316" style="background: #f97316;"></span>
+                            <span class="color-option" data-color="#eab308" style="background: #eab308;"></span>
+                            <span class="color-option" data-color="#22c55e" style="background: #22c55e;"></span>
+                            <span class="color-option" data-color="#14b8a6" style="background: #14b8a6;"></span>
+                            <span class="color-option" data-color="#06b6d4" style="background: #06b6d4;"></span>
+                            <span class="color-option" data-color="#3b82f6" style="background: #3b82f6;"></span>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <label>
+                            系统提示词
+                            <span class="help-icon custom-tooltip" data-tooltip="该项目下所有对话都会使用此系统提示词">?</span>
+                        </label>
+                        <textarea id="project-prompt-input" rows="3" placeholder="为该项目设置专属的系统提示词（可选）"></textarea>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" id="project-submit-btn">创建项目</button>
+                        <button type="button" id="project-delete-btn" class="btn-danger" style="display: none;">删除</button>
+                        <button type="button" id="project-form-reset">取消</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 右键菜单 -->
+<div class="context-menu" id="conversation-context-menu">
+    <div class="context-menu-item" data-action="rename">
+        <span class="menu-icon">✏️</span>
+        <span>重命名</span>
+    </div>
+    <div class="context-menu-item" data-action="pin">
+        <span class="menu-icon">📌</span>
+        <span class="pin-text">置顶</span>
+    </div>
+    <div class="context-menu-divider"></div>
+    <div class="context-menu-item context-menu-submenu" data-action="move">
+        <span class="menu-icon">📁</span>
+        <span>移动到项目</span>
+        <div class="context-submenu" id="move-to-project-submenu">
+            <div class="context-submenu-item" data-project-id="">
+                <span class="submenu-icon">📄</span>
+                <span>未分类</span>
+            </div>
+            <!-- 项目列表动态生成 -->
+        </div>
+    </div>
+    <div class="context-menu-divider"></div>
+    <div class="context-menu-item danger" data-action="delete">
+        <span class="menu-icon">🗑️</span>
+        <span>删除</span>
+    </div>
+</div>
+
+<!-- 自定义弹窗组件 -->
+<div class="custom-dialog-overlay" id="custom-dialog-overlay">
+    <div class="custom-dialog" id="custom-dialog">
+        <div class="custom-dialog-header">
+            <span class="custom-dialog-icon" id="custom-dialog-icon">ℹ️</span>
+            <span class="custom-dialog-title" id="custom-dialog-title">提示</span>
+        </div>
+        <div class="custom-dialog-body">
+            <div class="custom-dialog-message" id="custom-dialog-message"></div>
+            <div class="custom-dialog-input-wrapper" id="custom-dialog-input-wrapper" style="display: none;">
+                <input type="text" class="custom-dialog-input" id="custom-dialog-input" placeholder="">
+            </div>
+        </div>
+        <div class="custom-dialog-footer">
+            <button type="button" class="custom-dialog-btn custom-dialog-btn-cancel" id="custom-dialog-cancel">取消</button>
+            <button type="button" class="custom-dialog-btn custom-dialog-btn-confirm" id="custom-dialog-confirm">确定</button>
+        </div>
+    </div>
+</div>
+
 <!-- 引入Markdown处理模块 -->
 <script src="markdown.js?v=131"></script>
 
 <!-- 引入外部JavaScript -->
-<script src="script.js?v=210"></script>
+<script src="script.js?v=227"></script>
 
 </body>
 </html>

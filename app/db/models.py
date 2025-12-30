@@ -15,6 +15,39 @@ from sqlalchemy.orm import relationship
 from app.db.database import Base
 
 
+# 新增：项目表（用于对话分类）
+class Project(Base):
+    __tablename__ = "projects"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    icon = Column(String(50), nullable=True, default="📁")  # 项目图标（emoji）
+    color = Column(String(20), nullable=True, default="#6366f1")  # 项目颜色
+    system_prompt = Column(Text, nullable=True)  # 项目专属系统提示词
+    is_pinned = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    conversations = relationship(
+        "Conversation",
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "icon": self.icon,
+            "color": self.color,
+            "system_prompt": self.system_prompt,
+            "is_pinned": self.is_pinned,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "conversation_count": len(self.conversations) if self.conversations else 0,
+        }
+
+
 class Conversation(Base):
     __tablename__ = "conversations"
 
@@ -24,10 +57,13 @@ class Conversation(Base):
     is_pinned = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    # 新增：绑定到某个 Provider（可空）
+    # 绑定到某个 Provider（可空）
     provider_id = Column(Integer, ForeignKey("providers.id"), nullable=True)
+    
+    # 绑定到某个项目（可空）
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
 
-    # 新增：会话级功能开关
+    # 会话级功能开关
     enable_knowledge_base = Column(Boolean, default=False, nullable=False)
     enable_mcp = Column(Boolean, default=False, nullable=False)
     enable_web_search = Column(Boolean, default=False, nullable=False)
@@ -43,8 +79,11 @@ class Conversation(Base):
         cascade="all, delete-orphan",
     )
 
-    # 新增：provider 关系
+    # provider 关系
     provider = relationship("Provider", back_populates="conversations")
+    
+    # project 关系
+    project = relationship("Project", back_populates="conversations")
 
     def to_dict(self):
         return {
@@ -54,6 +93,10 @@ class Conversation(Base):
             "is_pinned": self.is_pinned,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "provider_id": self.provider_id,
+            "project_id": self.project_id,
+            "project_name": self.project.name if self.project else None,
+            "project_icon": self.project.icon if self.project else None,
+            "project_color": self.project.color if self.project else None,
             "enable_knowledge_base": self.enable_knowledge_base,
             "enable_mcp": self.enable_mcp,
             "enable_web_search": self.enable_web_search,

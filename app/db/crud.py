@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import List, Optional, Iterable, Tuple
 
 from sqlalchemy.orm import Session
@@ -9,16 +10,121 @@ from sqlalchemy.orm import Session
 from app.db import models
 
 
+# ========= 项目 CRUD =========
+
+def get_project(db: Session, project_id: int) -> Optional[models.Project]:
+    return db.query(models.Project).filter(models.Project.id == project_id).first()
+
+
+def get_projects(db: Session) -> List[models.Project]:
+    return (
+        db.query(models.Project)
+        .order_by(models.Project.is_pinned.desc(), models.Project.id.desc())
+        .all()
+    )
+
+
+def create_project(
+    db: Session,
+    name: str,
+    description: Optional[str] = None,
+    icon: str = "📁",
+    color: str = "#6366f1",
+    system_prompt: Optional[str] = None,
+) -> models.Project:
+    project = models.Project(
+        name=name,
+        description=description,
+        icon=icon,
+        color=color,
+        system_prompt=system_prompt,
+    )
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+    return project
+
+
+def update_project(
+    db: Session,
+    project_id: int,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    icon: Optional[str] = None,
+    color: Optional[str] = None,
+    system_prompt: Optional[str] = None,
+    is_pinned: Optional[bool] = None,
+) -> Optional[models.Project]:
+    project = get_project(db, project_id)
+    if not project:
+        return None
+    
+    if name is not None:
+        project.name = name
+    if description is not None:
+        project.description = description
+    if icon is not None:
+        project.icon = icon
+    if color is not None:
+        project.color = color
+    if system_prompt is not None:
+        project.system_prompt = system_prompt
+    if is_pinned is not None:
+        project.is_pinned = is_pinned
+    
+    db.commit()
+    db.refresh(project)
+    return project
+
+
+def delete_project(db: Session, project_id: int) -> None:
+    project = get_project(db, project_id)
+    if project:
+        # 将该项目下的对话移出项目（设为 None）
+        db.query(models.Conversation).filter(
+            models.Conversation.project_id == project_id
+        ).update({models.Conversation.project_id: None})
+        db.delete(project)
+        db.commit()
+
+
+def get_conversations_by_project(db: Session, project_id: Optional[int]) -> List[models.Conversation]:
+    """获取指定项目的对话，project_id=None 时获取未分类的对话"""
+    query = db.query(models.Conversation)
+    if project_id is None:
+        query = query.filter(models.Conversation.project_id.is_(None))
+    else:
+        query = query.filter(models.Conversation.project_id == project_id)
+    return query.order_by(models.Conversation.is_pinned.desc(), models.Conversation.id.desc()).all()
+
+
+def move_conversation_to_project(
+    db: Session,
+    conversation_id: int,
+    project_id: Optional[int],
+) -> Optional[models.Conversation]:
+    """将对话移动到指定项目，project_id=None 表示移出项目"""
+    conversation = get_conversation(db, conversation_id)
+    if not conversation:
+        return None
+    conversation.project_id = project_id
+    db.commit()
+    db.refresh(conversation)
+    return conversation
+
+
+# ========= 对话 CRUD =========
+
 def get_conversation(db: Session, conversation_id: int) -> Optional[models.Conversation]:
     return db.query(models.Conversation).filter(models.Conversation.id == conversation_id).first()
 
 
-def get_conversations(db: Session) -> List[models.Conversation]:
-    return (
-        db.query(models.Conversation)
-        .order_by(models.Conversation.is_pinned.desc(), models.Conversation.id.desc())
-        .all()
-    )
+def get_conversations(db: Session, project_id: Optional[int] = None) -> List[models.Conversation]:
+    """获取对话列表，可按项目筛选"""
+    query = db.query(models.Conversation)
+    if project_id is not None:
+        query = query.filter(models.Conversation.project_id == project_id)
+    return query.order_by(models.Conversation.is_pinned.desc(), models.Conversation.id.desc()).all()
 
 
 def get_latest_conversation(db: Session) -> Optional[models.Conversation]:
@@ -41,11 +147,13 @@ def create_conversation(
     db: Session,
     title: str = "新对话",
     model: Optional[str] = None,
+    project_id: Optional[int] = None,
 ) -> models.Conversation:
-    conversation = models.Conversation(title=title, model=model)
+    conversation = models.Conversation(title=title, model=model, project_id=project_id)
     db.add(conversation)
     db.commit()
     db.refresh(conversation)
+    return conversation
     return conversation
 
 

@@ -155,12 +155,106 @@ def set_provider_config(
 
     return {"success": True}
 
+# ========== 项目管理 ==========
+
+@app.get("/projects")
+def list_projects(db: Session = Depends(get_db)):
+    """获取所有项目列表"""
+    projects = crud.get_projects(db)
+    return [p.to_dict() for p in projects]
+
+
+@app.post("/projects")
+def create_project(
+    name: str = Form(...),
+    description: Optional[str] = Form(None),
+    icon: str = Form("📁"),
+    color: str = Form("#6366f1"),
+    system_prompt: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+):
+    """创建新项目"""
+    project = crud.create_project(
+        db,
+        name=name,
+        description=description,
+        icon=icon,
+        color=color,
+        system_prompt=system_prompt,
+    )
+    return project.to_dict()
+
+
+@app.get("/projects/{project_id}")
+def get_project(project_id: int, db: Session = Depends(get_db)):
+    """获取项目详情"""
+    project = crud.get_project(db, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project.to_dict()
+
+
+@app.put("/projects/{project_id}")
+def update_project(
+    project_id: int,
+    name: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+    icon: Optional[str] = Form(None),
+    color: Optional[str] = Form(None),
+    system_prompt: Optional[str] = Form(None),
+    is_pinned: Optional[bool] = Form(None),
+    db: Session = Depends(get_db),
+):
+    """更新项目"""
+    project = crud.update_project(
+        db,
+        project_id,
+        name=name,
+        description=description,
+        icon=icon,
+        color=color,
+        system_prompt=system_prompt,
+        is_pinned=parse_bool(is_pinned),
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project.to_dict()
+
+
+@app.delete("/projects/{project_id}")
+def delete_project(project_id: int, db: Session = Depends(get_db)):
+    """删除项目（项目内的对话会被移出项目，不会被删除）"""
+    crud.delete_project(db, project_id)
+    return {"success": True}
+
+
+@app.get("/projects/{project_id}/conversations")
+def get_project_conversations(project_id: int, db: Session = Depends(get_db)):
+    """获取项目内的对话列表"""
+    conversations = crud.get_conversations_by_project(db, project_id)
+    return [conv.to_dict() for conv in conversations]
+
+
+@app.post("/conversations/{conversation_id}/move")
+def move_conversation(
+    conversation_id: int,
+    project_id: Optional[int] = Form(None),
+    db: Session = Depends(get_db),
+):
+    """将对话移动到指定项目，project_id=null 表示移出项目"""
+    conv = crud.move_conversation_to_project(db, conversation_id, project_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conv.to_dict()
+
+
 # ========== 会话管理 ==========
 
 @app.post("/conversations")
 def create_conversation(
     title: Optional[str] = Form("新对话"),
     model: Optional[str] = Form(None),
+    project_id: Optional[int] = Form(None),
     db: Session = Depends(get_db),
 ):
     """
@@ -180,14 +274,21 @@ def create_conversation(
                 latest = crud.update_conversation_title(db, latest.id, title)
             if model and model != latest.model:
                 latest = crud.update_conversation_model(db, latest.id, model)
+            # 更新项目归属
+            if project_id is not None and project_id != latest.project_id:
+                latest = crud.move_conversation_to_project(db, latest.id, project_id)
             return {"conversation": latest.to_dict(), "reused": True}
 
-    conv = crud.create_conversation(db, title=title, model=model)
+    conv = crud.create_conversation(db, title=title, model=model, project_id=project_id)
     return {"conversation": conv.to_dict(), "reused": False}
 
 @app.get("/conversations")
-def list_conversations(db: Session = Depends(get_db)):
-    conversations = crud.get_conversations(db)
+def list_conversations(
+    project_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    """获取对话列表，可按项目筛选"""
+    conversations = crud.get_conversations(db, project_id=project_id)
     return [conv.to_dict() for conv in conversations]
 
 @app.delete("/conversations/{conversation_id}")
@@ -1852,7 +1953,7 @@ def chat_with_conversation(
             except Exception:
                 pass
         
-        # 添加没有文字的文档（转为图片，两页合并一张）
+        # 添加没有文字的文档
         if docs_need_vision:
             for doc_info in docs_need_vision:
                 try:
@@ -1860,52 +1961,56 @@ def chat_with_conversation(
                     filename = doc_info["filename"]
                     ext = os.path.splitext(filename)[1].lower()
                     
-                    images = []
+                    # PDF 直接 base64 发送（视觉模型原生支持）
                     if ext == '.pdf':
-                        from pdf2image import convert_from_path
-                        import platform
-                        poppler_path = None
-                        if platform.system() == "Windows":
-                            poppler_path = r"C:\poppler\poppler-24.08.0\Library\bin"
-                            if not os.path.exists(poppler_path):
-                                poppler_path = None
-                        images = convert_from_path(filepath, first_page=1, last_page=10, dpi=150, poppler_path=poppler_path)
-                    elif ext in ['.ppt', '.pptx']:
-                        images = _convert_ppt_to_images(filepath)
-                    elif ext in ['.doc', '.docx']:
-                        images = _convert_word_to_images(filepath)
-                    
-                    if images:
-                        # 两页合并一张
-                        for i in range(0, len(images), 2):
-                            if i + 1 < len(images):
-                                img1, img2 = images[i], images[i + 1]
-                                max_width = max(img1.width, img2.width)
-                                if img1.width != max_width:
-                                    ratio = max_width / img1.width
-                                    img1 = img1.resize((max_width, int(img1.height * ratio)), Image.Resampling.LANCZOS)
-                                if img2.width != max_width:
-                                    ratio = max_width / img2.width
-                                    img2 = img2.resize((max_width, int(img2.height * ratio)), Image.Resampling.LANCZOS)
-                                total_height = img1.height + img2.height + 20
-                                merged = Image.new('RGB', (max_width, total_height), 'white')
-                                merged.paste(img1, (0, 0))
-                                merged.paste(img2, (0, img1.height + 20))
-                                img = merged
-                            else:
-                                img = images[i]
-                            
-                            buffer = io.BytesIO()
-                            img.save(buffer, format='PNG', optimize=True)
-                            image_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
-                            content_parts.append({
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{image_data}"
-                                }
-                            })
+                        with open(filepath, "rb") as f:
+                            pdf_data = base64.b64encode(f.read()).decode("utf-8")
+                        content_parts.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:application/pdf;base64,{pdf_data}"
+                            }
+                        })
+                        chat_logger.info(f"PDF 直接发送: {filename}")
+                    else:
+                        # Word/PPT 转为图片（两页合并一张）
+                        images = []
+                        if ext in ['.ppt', '.pptx']:
+                            images = _convert_ppt_to_images(filepath)
+                        elif ext in ['.doc', '.docx']:
+                            images = _convert_word_to_images(filepath)
+                        
+                        if images:
+                            # 两页合并一张
+                            for i in range(0, len(images), 2):
+                                if i + 1 < len(images):
+                                    img1, img2 = images[i], images[i + 1]
+                                    max_width = max(img1.width, img2.width)
+                                    if img1.width != max_width:
+                                        ratio = max_width / img1.width
+                                        img1 = img1.resize((max_width, int(img1.height * ratio)), Image.Resampling.LANCZOS)
+                                    if img2.width != max_width:
+                                        ratio = max_width / img2.width
+                                        img2 = img2.resize((max_width, int(img2.height * ratio)), Image.Resampling.LANCZOS)
+                                    total_height = img1.height + img2.height + 20
+                                    merged = Image.new('RGB', (max_width, total_height), 'white')
+                                    merged.paste(img1, (0, 0))
+                                    merged.paste(img2, (0, img1.height + 20))
+                                    img = merged
+                                else:
+                                    img = images[i]
+                                
+                                buffer = io.BytesIO()
+                                img.save(buffer, format='PNG', optimize=True)
+                                image_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
+                                content_parts.append({
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/png;base64,{image_data}"
+                                    }
+                                })
                 except Exception as e:
-                    chat_logger.warning(f"文档转图片失败 {filename}: {e}")
+                    chat_logger.warning(f"文档处理失败 {filename}: {e}")
         
         messages.append({"role": "user", "content": content_parts})
     else:
@@ -1913,6 +2018,12 @@ def chat_with_conversation(
 
     # 优化上下文，限制对话轮数
     messages = ContextManager.optimize_messages(messages, max_turns=6)
+
+    # 如果对话关联了项目，且项目有系统提示词，添加到消息开头
+    if conversation.project and conversation.project.system_prompt:
+        project_system_prompt = conversation.project.system_prompt.strip()
+        if project_system_prompt:
+            messages.insert(0, {"role": "system", "content": project_system_prompt})
 
     # 如果启用了联网搜索，添加系统提示
     web_flag = (
@@ -1922,7 +2033,7 @@ def chat_with_conversation(
     )
     if web_flag:
         search_source = web_search_source or "duckduckgo"
-        system_prompt = f"你可以使用 web_search 工具查询最新信息和实时数据。默认搜索源：{search_source}。建议：使用精准的搜索关键词，尽量一次搜索获取足够信息。"
+        system_prompt = f"如果用户问题需要最新信息或实时数据，可以使用 web_search 工具进行搜索。搜索源：{search_source}。"
         messages.insert(0, {"role": "system", "content": system_prompt})
 
     # 如果启用了 MCP 工具，添加系统提示告诉 AI 可用的工具
@@ -1941,11 +2052,11 @@ def chat_with_conversation(
                 tool_desc = func.get('description', '')
                 tool_descriptions.append(f"- {tool_name}: {tool_desc[:150]}")
             
-            mcp_system_prompt = f"""你可以使用以下工具来完成用户的请求：
+            mcp_system_prompt = f"""以下工具可供使用（仅在用户明确需要时调用）：
 
 {chr(10).join(tool_descriptions)}
 
-当用户需要执行相关操作时，请积极调用工具完成任务。工具调用时使用完整的工具名称。"""
+请根据用户实际需求判断是否需要调用工具。"""
             messages.insert(0, {"role": "system", "content": mcp_system_prompt})
 
     # 4. 智能选择工具，减少不必要的工具定义
@@ -2237,19 +2348,12 @@ def chat_with_conversation(
             try:
                 chat_logger.info(f"[STREAM] 使用工具模式")
                 
-                # 判断启用了哪些工具，发送对应提示
+                # 判断启用了哪些工具（用于后续工具调用时的提示）
                 kb_enabled = smart_tools.get('knowledge_base', False)
                 web_enabled = smart_tools.get('web_search', False)
                 mcp_enabled = smart_tools.get('mcp', False)
                 
-                if kb_enabled:
-                    yield f"event: tool_start\ndata: {{\"status\": \"search_knowledge\", \"message\": \"正在查询知识库...\"}}\n\n"
-                elif web_enabled:
-                    yield f"event: tool_start\ndata: {{\"status\": \"web_search\", \"message\": \"正在联网搜索...\"}}\n\n"
-                elif mcp_enabled:
-                    yield f"event: tool_start\ndata: {{\"status\": \"mcp\", \"message\": \"正在调用工具...\"}}\n\n"
-                else:
-                    yield f"event: tool_start\ndata: {{\"status\": \"thinking\", \"message\": \"正在分析问题...\"}}\n\n"
+                # 不再在开始时发送 tool_start 事件，等模型实际调用工具时再发送
                 
                 current_messages = messages.copy()
                 tool_calls_info = []
@@ -2257,6 +2361,7 @@ def chat_with_conversation(
                 total_input_tokens = 0
                 total_output_tokens = 0
                 max_iterations = 3  # 限制工具调用次数，避免过多消耗
+                first_tool_call = True  # 标记是否是第一次工具调用
                 
                 # 第一阶段:非深度思考模式下的工具调用循环
                 for iteration in range(max_iterations):
@@ -2279,9 +2384,22 @@ def chat_with_conversation(
                     
                     tool_calls = message.get("tool_calls")
                     if not tool_calls:
-                        # 没有工具调用，发送提示并进入深度思考阶段
-                        yield f"event: tool_end\ndata: {{\"status\": \"skipped\", \"message\": \"模型未调用工具\", \"tools\": []}}\n\n"
+                        # 没有工具调用，进入深度思考阶段（不发送 tool_end，因为没有发送过 tool_start）
                         break
+                    
+                    # 有工具调用，先发送 tool_start 事件（仅第一次）
+                    if first_tool_call:
+                        first_tool_call = False
+                        # 根据第一个工具类型发送对应提示
+                        first_tool_name = tool_calls[0]["function"]["name"]
+                        if first_tool_name == "search_knowledge":
+                            yield f"event: tool_start\ndata: {{\"status\": \"search_knowledge\", \"message\": \"正在检索知识库...\"}}\n\n"
+                        elif first_tool_name == "web_search":
+                            yield f"event: tool_start\ndata: {{\"status\": \"web_search\", \"message\": \"正在联网搜索...\"}}\n\n"
+                        elif first_tool_name.startswith("mcp_"):
+                            yield f"event: tool_start\ndata: {{\"status\": \"mcp\", \"message\": \"正在调用工具...\"}}\n\n"
+                        else:
+                            yield f"event: tool_start\ndata: {{\"status\": \"thinking\", \"message\": \"正在处理...\"}}\n\n"
                     
                     # 有工具调用，把消息加入历史
                     # 注意：需要确保 message 格式正确，某些 API 可能返回额外字段
@@ -2338,7 +2456,7 @@ def chat_with_conversation(
                             tool_info["result_preview"] = result_preview
                             
                             # 发送工具调用进度 - 完成
-                            yield f"event: tool_progress\ndata: {{\"tool\": \"{function_name}\", \"stage\": \"done\", \"message\": \"✓ 搜索完成\", \"preview\": {json.dumps(result_preview, ensure_ascii=False)}}}\n\n"
+                            yield f"event: tool_progress\ndata: {{\"tool\": \"{function_name}\", \"stage\": \"done\", \"message\": \"✓ 调用完成\", \"preview\": {json.dumps(result_preview, ensure_ascii=False)}}}\n\n"
                             
                             # 记录工具调用事件
                             add_event("tool_call", tool_info.copy())
@@ -2666,7 +2784,7 @@ def chat_with_conversation(
                             
                             # 发送工具调用开始提示
                             tool_messages = {
-                                "search_knowledge": "正在查询知识库...",
+                                "search_knowledge": "正在检索知识库...",
                                 "web_search": "正在联网搜索...",
                             }
                             tool_msg = tool_messages.get(tool_name, f"正在执行 {tool_name}...")
@@ -2995,7 +3113,7 @@ def get_provider_detail(provider_id: int, db: Session = Depends(get_db)):
 def create_provider(
     name: str = Form(...),
     api_base: str = Form(...),
-    api_key: str = Form(...),
+    api_key: Optional[str] = Form(None),
     default_model: str = Form(...),
     models_str: Optional[str] = Form(None),
     models_config: Optional[str] = Form(None),
@@ -3008,11 +3126,14 @@ def create_provider(
         if existing:
             raise HTTPException(status_code=400, detail=f"Provider名称 '{name}' 已存在")
         
+        # API key 可以为空字符串或 None
+        actual_api_key = api_key if api_key else ""
+        
         provider = crud.create_provider(
             db,
             name=name,
             api_base=api_base,
-            api_key=api_key,
+            api_key=actual_api_key,
             default_model=default_model,
             models_str=models_str,
             models_config=models_config,
@@ -3717,6 +3838,15 @@ def get_settings(db: Session = Depends(get_db)):
         "global_api_key": settings_dict.get("global_api_key", getattr(settings, 'AI_API_KEY', '')),
         "global_api_base": settings_dict.get("global_api_base", getattr(settings, 'AI_API_BASE', 'https://api.openai.com/v1')),
         "global_default_model": settings_dict.get("global_default_model", getattr(settings, 'AI_MODEL', 'gpt-4o-mini')),
+        # 新增设置项
+        "theme": settings_dict.get("theme", "light"),
+        "bubble_style": settings_dict.get("bubble_style", "default"),
+        "context_length": settings_dict.get("context_length", "20"),
+        "default_system_prompt": settings_dict.get("default_system_prompt", ""),
+        "search_results_count": settings_dict.get("search_results_count", "5"),
+        # 头像相关设置
+        "show_avatar": settings_dict.get("show_avatar", "true"),
+        "user_avatar": settings_dict.get("user_avatar", ""),
     }
 
 @app.post("/settings")
@@ -3724,6 +3854,10 @@ def update_settings(
     layout_scale: Optional[str] = Form(None),
     auto_title_model: Optional[str] = Form(None),
     default_vision_model: Optional[str] = Form(None),
+    default_chat_model: Optional[str] = Form(None),
+    last_selected_model: Optional[str] = Form(None),
+    enable_thinking: Optional[str] = Form(None),
+    selected_mcp_servers: Optional[str] = Form(None),
     theme: Optional[str] = Form(None),
     language: Optional[str] = Form(None),
     default_search_source: Optional[str] = Form(None),
@@ -3731,6 +3865,14 @@ def update_settings(
     global_api_key: Optional[str] = Form(None),
     global_api_base: Optional[str] = Form(None),
     global_default_model: Optional[str] = Form(None),
+    # 新增设置项
+    bubble_style: Optional[str] = Form(None),
+    context_length: Optional[str] = Form(None),
+    default_system_prompt: Optional[str] = Form(None),
+    search_results_count: Optional[str] = Form(None),
+    # 头像相关设置
+    show_avatar: Optional[str] = Form(None),
+    user_avatar: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
     """更新系统设置"""
@@ -3746,6 +3888,18 @@ def update_settings(
     if default_vision_model is not None:  # 允许空字符串(表示不启用)
         crud.set_setting(db, "default_vision_model", default_vision_model)
         settings_data["default_vision_model"] = default_vision_model
+    if default_chat_model is not None:
+        crud.set_setting(db, "default_chat_model", default_chat_model)
+        settings_data["default_chat_model"] = default_chat_model
+    if last_selected_model is not None:
+        crud.set_setting(db, "last_selected_model", last_selected_model)
+        settings_data["last_selected_model"] = last_selected_model
+    if enable_thinking is not None:
+        crud.set_setting(db, "enable_thinking", enable_thinking)
+        settings_data["enable_thinking"] = enable_thinking
+    if selected_mcp_servers is not None:
+        crud.set_setting(db, "selected_mcp_servers", selected_mcp_servers)
+        settings_data["selected_mcp_servers"] = selected_mcp_servers
     if theme:
         crud.set_setting(db, "theme", theme)
         settings_data["theme"] = theme
@@ -3758,6 +3912,28 @@ def update_settings(
     if tavily_api_key is not None:  # 允许空字符串
         crud.set_setting(db, "tavily_api_key", tavily_api_key)
         settings_data["tavily_api_key"] = tavily_api_key
+    
+    # 新增设置项
+    if bubble_style:
+        crud.set_setting(db, "bubble_style", bubble_style)
+        settings_data["bubble_style"] = bubble_style
+    if context_length:
+        crud.set_setting(db, "context_length", context_length)
+        settings_data["context_length"] = context_length
+    if default_system_prompt is not None:  # 允许空字符串
+        crud.set_setting(db, "default_system_prompt", default_system_prompt)
+        settings_data["default_system_prompt"] = default_system_prompt
+    if search_results_count:
+        crud.set_setting(db, "search_results_count", search_results_count)
+        settings_data["search_results_count"] = search_results_count
+    
+    # 头像相关设置
+    if show_avatar is not None:
+        crud.set_setting(db, "show_avatar", show_avatar)
+        settings_data["show_avatar"] = show_avatar
+    if user_avatar is not None:  # 允许空字符串（重置头像）
+        crud.set_setting(db, "user_avatar", user_avatar)
+        settings_data["user_avatar"] = user_avatar
     
     # 新增:全局API配置
     if global_api_key is not None:
@@ -3782,6 +3958,58 @@ def update_settings(
         os.environ["AI_MODEL"] = global_default_model
     
     return {"success": True, "settings": settings_data}
+
+
+# ========== 重置设置接口 ==========
+
+@app.post("/settings/reset")
+def reset_settings(db: Session = Depends(get_db)):
+    """重置所有设置为默认值"""
+    # 需要重置的设置项列表
+    settings_to_reset = [
+        "layout_scale", "theme", "bubble_style", "context_length",
+        "default_system_prompt", "search_results_count", "auto_title_model",
+        "default_vision_model", "default_chat_model", "default_search_source",
+        "show_avatar", "user_avatar"
+    ]
+    
+    for key in settings_to_reset:
+        crud.delete_setting(db, key)
+    
+    return {"success": True, "message": "设置已重置"}
+
+
+# ========== 收藏模型接口 ==========
+
+@app.get("/settings/favorite-models")
+def get_favorite_models(db: Session = Depends(get_db)):
+    """获取收藏的模型列表"""
+    setting = crud.get_setting(db, "favorite_models")
+    if setting and setting.value:
+        try:
+            return {"favorites": json.loads(setting.value)}
+        except:
+            return {"favorites": []}
+    return {"favorites": []}
+
+
+@app.post("/settings/favorite-models")
+def update_favorite_models(
+    favorites: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """更新收藏的模型列表"""
+    try:
+        # 验证 JSON 格式
+        favorites_list = json.loads(favorites)
+        if not isinstance(favorites_list, list):
+            raise HTTPException(status_code=400, detail="favorites 必须是数组")
+        
+        crud.set_setting(db, "favorite_models", favorites)
+        return {"success": True, "favorites": favorites_list}
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="无效的 JSON 格式")
+
 
 @app.get("/logs/export")
 def export_logs(hours: int = 24):
